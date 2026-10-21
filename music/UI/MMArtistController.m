@@ -41,7 +41,7 @@
     _table=[[UITableView alloc] initWithFrame:CGRectMake(0,46,W,H-46) style:UITableViewStylePlain];
     _table.backgroundColor=[SpotTheme bg]; _table.separatorStyle=UITableViewCellSeparatorStyleNone;
     _table.dataSource=self; _table.delegate=self; _table.rowHeight=MMTrackRowH; _table.contentInset=UIEdgeInsetsMake(0,0,MMPageBottomInset(90),0);
-    _table.autoresizingMask=UIViewAutoresizingFlexibleHeight|UIViewAutoresizingFlexibleWidth; [self.view addSubview:_table];
+    _table.autoresizingMask=UIViewAutoresizingFlexibleHeight|UIViewAutoresizingFlexibleWidth; [SpotTheme skinTable:_table]; [self.view addSubview:_table];
 
     // Kopf: rundes Bild + großer Name
     UIView*head=[[UIView alloc] initWithFrame:CGRectMake(0,0,W,172)];
@@ -49,6 +49,8 @@
     _portrait.layer.cornerRadius=56; _portrait.clipsToBounds=YES; _portrait.contentMode=UIViewContentModeScaleAspectFill; [head addSubview:_portrait];
     _bigName=[[UILabel alloc] initWithFrame:CGRectMake(16,128,W-32,32)]; _bigName.text=_name?:@""; _bigName.font=[UIFont boldSystemFontOfSize:24];
     _bigName.textColor=[SpotTheme ink]; _bigName.textAlignment=NSTextAlignmentCenter; _bigName.adjustsFontSizeToFitWidth=YES; [head addSubview:_bigName];
+    if([SpotTheme ios6]){ [SpotTheme albumHeadBackground:head]; [SpotTheme shadowBehind:_portrait]; [SpotTheme engrave:_bigName];   // Grund wie der Albumkopf, Bild mit Schatten
+        _bigName.textColor=[SpotTheme ink]; _bigName.shadowColor=[UIColor colorWithWhite:1 alpha:0.45]; }
     MMAutoMask(head);   // iPad: Bild und Name bleiben beim Drehen mittig
     if(MMIsPad()){
         // iPad: Kopf fest oben, darunter zwei Spalten, die jede für sich scrollen (wie Spotify 2012 auf dem iPad)
@@ -56,7 +58,7 @@
         CGFloat ty=46+172, lw=floor(W/2);
         _table.frame=CGRectMake(0,ty,lw,H-ty); _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleRightMargin|UIViewAutoresizingFlexibleHeight;
         _table2=[[UITableView alloc] initWithFrame:CGRectMake(lw,ty,W-lw,H-ty) style:UITableViewStylePlain];
-        _table2.backgroundColor=[SpotTheme bg]; _table2.separatorStyle=UITableViewCellSeparatorStyleNone; _table2.dataSource=self; _table2.delegate=self;
+        _table2.backgroundColor=[SpotTheme bg]; _table2.separatorStyle=UITableViewCellSeparatorStyleNone; _table2.dataSource=self; _table2.delegate=self; [SpotTheme skinTable:_table2];
         _table2.rowHeight=MMTrackRowH; _table2.contentInset=_table.contentInset;
         _table2.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_table2];
     } else _table.tableHeaderView=head;
@@ -115,8 +117,9 @@ static NSString* yearOf(NSDictionary*a){ id y=a[@"release_date"]; return [y isKi
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return [self secs:tv].count; }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return [[self secs:tv][s][@"rows"] count]; }
-- (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s { return 40; }
+- (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s { return [SpotTheme ios6]?22:40; }
 - (UIView *)tableView:(UITableView *)tv viewForHeaderInSection:(NSInteger)s {
+    if([SpotTheme ios6]) return [SpotTheme plainSectionHeader:[self secs:tv][s][@"title"] width:tv.bounds.size.width];
     UIView*v=[[UIView alloc] initWithFrame:CGRectMake(0,0,tv.bounds.size.width,40)]; v.backgroundColor=[SpotTheme bg];
     UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(16,8,tv.bounds.size.width-32,28)]; l.text=[self secs:tv][s][@"title"];
     l.font=[UIFont boldSystemFontOfSize:18]; l.textColor=[SpotTheme ink]; l.backgroundColor=[UIColor clearColor]; [v addSubview:l];
@@ -144,10 +147,10 @@ static NSString* yearOf(NSDictionary*a){ id y=a[@"release_date"]; return [y isKi
     return c;
 }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];   // Auswahl nicht stehen lassen (sonst bleibt die Schrift weiß)
     NSDictionary*sec=[self secs:tv][ip.section];
     if([sec[@"kind"] isEqualToString:@"tracks"]){
         [[MMRootController shared] playList:_tracks index:ip.row context:@{@"type":@"artist",@"id":_artistId,@"name":_name?:@"",@"images":_portraitURL?@[@{@"url":_portraitURL}]:@[]}];
-        if(!MMIsPad()) [[MMRootController shared] openPlayer];   // iPad: nur abspielen, die Leiste unten zeigt den Titel
         return;
     }
     NSDictionary*a=sec[@"rows"][ip.row]; if(![a[@"id"] isKindOfClass:[NSString class]]) return;

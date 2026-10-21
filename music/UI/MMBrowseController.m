@@ -16,7 +16,7 @@
 
 - (void)loadView {
     self.view=[[UIView alloc] initWithFrame:MMPageFrame(NO)];
-    self.view.backgroundColor=[SpotTheme bg];
+    self.view.backgroundColor=[SpotTheme ios6]?[SpotTheme shelfColor]:[SpotTheme pageBackground];   // iOS 6: Grund wie die Startseite
     _W=self.view.bounds.size.width;
 
     UILabel*t=[[UILabel alloc] initWithFrame:CGRectMake(16,10,_W-32,30)];
@@ -56,10 +56,17 @@
         NSDictionary*cat=_cats[i]; NSArray*c=cat[@"c"];
         CGFloat col=i%cols, rowY=(i/cols)*(tileH+gap);
         UIView*tile=[[UIView alloc] initWithFrame:CGRectMake(16+col*(tileW+gap),rowY,tileW,tileH)];
-        tile.backgroundColor=[UIColor colorWithRed:[c[0] floatValue] green:[c[1] floatValue] blue:[c[2] floatValue] alpha:1];
-        tile.layer.cornerRadius=6; tile.clipsToBounds=YES; tile.tag=1000+i;
+        UIColor*tint=[UIColor colorWithRed:[c[0] floatValue] green:[c[1] floatValue] blue:[c[2] floatValue] alpha:1];
+        tile.backgroundColor=tint; tile.layer.cornerRadius=6; tile.clipsToBounds=YES; tile.tag=1000+i;
+        if([SpotTheme ios6]){   // glänzender, abgerundeter Knopf mit Schatten
+            tile.backgroundColor=[UIColor clearColor]; tile.clipsToBounds=NO; tile.layer.cornerRadius=10;
+            UIImageView*g=[[UIImageView alloc] initWithFrame:tile.bounds]; g.image=[SpotTheme glossyImage:tint radius:10 size:tile.bounds.size]; [tile addSubview:g];
+            tile.layer.shadowColor=[UIColor blackColor].CGColor; tile.layer.shadowOpacity=0.35; tile.layer.shadowRadius=2; tile.layer.shadowOffset=CGSizeMake(0,1.5);
+            tile.layer.shadowPath=[UIBezierPath bezierPathWithRoundedRect:tile.bounds cornerRadius:10].CGPath; }
         UILabel*nm=[[UILabel alloc] initWithFrame:CGRectMake(12,8,tileW-24,tileH-16)];
-        nm.text=cat[@"name"]; nm.numberOfLines=2; nm.font=[UIFont boldSystemFontOfSize:16]; nm.textColor=[UIColor whiteColor]; [tile addSubview:nm];
+        nm.text=cat[@"name"]; nm.numberOfLines=2; nm.font=[UIFont boldSystemFontOfSize:16]; nm.textColor=[UIColor whiteColor]; nm.backgroundColor=[UIColor clearColor];
+        if([SpotTheme ios6]){ nm.shadowColor=[UIColor colorWithWhite:0 alpha:0.4]; nm.shadowOffset=CGSizeMake(0,-1); }
+        [tile addSubview:nm];
         UIButton*tap=[UIButton buttonWithType:UIButtonTypeCustom]; tap.frame=tile.bounds; tap.tag=i; [tap addTarget:self action:@selector(open:) forControlEvents:UIControlEventTouchUpInside]; [tile addSubview:tap];
         [_sc addSubview:tile];
     }

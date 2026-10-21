@@ -19,12 +19,12 @@
     UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(x,_y,w,20)];
     l.text=text; l.font=f; l.textColor=c; l.numberOfLines=0; l.backgroundColor=[UIColor clearColor];
     [l sizeToFit]; l.frame=CGRectMake(x,_y,w,l.frame.size.height);
-    [_scroll addSubview:l]; return l;
+    [_scroll addSubview:l]; [SpotTheme engrave:l]; return l;
 }
 
 // Wert zum Abtippen/Kopieren (Adresse, Redirect URI) in einer Box hervorheben
 - (void)valueBox:(NSString *)value x:(CGFloat)x {
-    UIView*box=[[UIView alloc] initWithFrame:CGRectMake(x,_y,_W-x-16,30)]; box.backgroundColor=[SpotTheme card]; box.layer.cornerRadius=4;
+    UIView*box=[[UIView alloc] initWithFrame:CGRectMake(x,_y,_W-x-16,30)]; box.backgroundColor=[SpotTheme card]; box.layer.cornerRadius=4; [SpotTheme groupedTile:box];
     UILabel*l=[[UILabel alloc] initWithFrame:CGRectInset(box.bounds,8,0)];
     l.text=value; l.font=[UIFont fontWithName:@"Courier-Bold" size:13]; l.textColor=[SpotTheme green]; l.adjustsFontSizeToFitWidth=YES; l.backgroundColor=[UIColor clearColor];
     [box addSubview:l]; [_scroll addSubview:box]; _y+=36;
@@ -76,8 +76,12 @@ MM_IOS6_END
         [SpotTheme styleBackButton:back]; [back setTitleColor:[SpotTheme ink] forState:UIControlStateNormal];
         back.titleLabel.font=[UIFont systemFontOfSize:14]; back.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeft;
         [back addTarget:self action:@selector(skip) forControlEvents:UIControlEventTouchUpInside]; [_scroll addSubview:back];
+        if([SpotTheme ios6]){ [back removeFromSuperview]; back.frame=CGRectMake(8,8,80,34); [self.view addSubview:back]; }   // iOS 6: Zurück in die Navigationsleiste
     }
-    _y=48;
+    if([SpotTheme ios6]){   // iOS 6: Titel in der Leiste, Text scrollt darunter
+        UILabel*nt=[[UILabel alloc] initWithFrame:CGRectMake(90,8,self.view.bounds.size.width-180,34)]; nt.text=L(@"Search key"); [self.view addSubview:nt];
+        _scroll.frame=CGRectMake(_scroll.frame.origin.x,44,_scroll.frame.size.width,H-44); self.view.backgroundColor=[SpotTheme pageBackground]; }
+    _y=[SpotTheme ios6]?16:48;   // iOS 6: der Kopf ist die Leiste
     [self label:L(@"Unlock search") font:[SpotTheme h1] color:[SpotTheme ink] x:16 w:_W-32]; _y+=32;
     UILabel*intro=[self label:L(@"Spotify only allows search with your own free developer key. You set it up once, takes about 3 minutes – best on your phone or computer.") font:[SpotTheme sub] color:[SpotTheme muted] x:16 w:_W-32];
     _y+=intro.frame.size.height+20;
@@ -96,8 +100,10 @@ MM_IOS6_END
 
     _save=[UIButton buttonWithType:UIButtonTypeCustom];
     _save.frame=CGRectMake(40,_y,_W-80,48); _save.backgroundColor=[SpotTheme green]; _save.layer.cornerRadius=24;
+    if([SpotTheme ios6]){ _save.backgroundColor=[UIColor clearColor]; _save.layer.cornerRadius=0; [_save setBackgroundImage:[SpotTheme glossyImage:[SpotTheme green] radius:10] forState:UIControlStateNormal]; }
     _save.titleLabel.font=[UIFont boldSystemFontOfSize:15];
-    [_save setTitle:L(@"CHECK & SAVE") forState:UIControlStateNormal]; [_save setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+    [_save setTitle:L(@"CHECK & SAVE") forState:UIControlStateNormal]; [_save setTitleColor:[SpotTheme ios6]?[UIColor whiteColor]:[UIColor blackColor] forState:UIControlStateNormal];
+    if([SpotTheme ios6]){ [_save setTitleShadowColor:[UIColor colorWithWhite:0 alpha:0.4] forState:UIControlStateNormal]; _save.titleLabel.shadowOffset=CGSizeMake(0,-1); }
     [_save addTarget:self action:@selector(save) forControlEvents:UIControlEventTouchUpInside]; [_scroll addSubview:_save];
     _y+=58;
     _status=[[UILabel alloc] initWithFrame:CGRectMake(16,_y,_W-32,54)]; _status.font=[SpotTheme sub]; _status.textColor=[SpotTheme muted];
@@ -116,6 +122,7 @@ MM_IOS6_END
         _y+=44;
     }
     _scroll.contentSize=CGSizeMake(_W,_y+(self.skippable?20:80));   // unten Platz für Tab-/Player-Leiste
+    [SpotTheme skinPage:self.view];   // auch als eigener Bildschirm nach dem ersten Anmelden
 }
 
 // viewDidLoad statt viewWillAppear: im Inhaltsbereich (pushContent) kommt kein viewWillAppear an

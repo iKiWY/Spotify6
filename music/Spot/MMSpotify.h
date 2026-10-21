@@ -56,6 +56,7 @@ void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Librar
 + (NSString *)diagnosticLog;   // gefilterte Log-Zeilen für die Seite "Fehlerinfos" (ohne Zugangsdaten)
 + (void)runConnectionTest:(void(^)(NSString *line))line done:(void(^)(void))done;   // für "Debug info": Netz, Server/Ports, Song-Schlüssel, Download
 + (NSString *)deviceModel;     // z.B. "iPod4,1"
++ (NSData *)httpsGet:(NSURL *)url;   // GET über das eigene TLS (mbedTLS): für Hosts, die das iOS-HTTPS ablehnt (z.B. iOS 7 und Spotifys Bild-CDN). nil bei Fehler/Nicht-200
 + (BOOL)isLoading;   // true während ein Track geladen/entschlüsselt wird
 // Eigener Spotify-Entwickler-Schlüssel (nur für die Suche). Wird vor dem Speichern bei Spotify geprüft.
 + (BOOL)hasSearchKey;

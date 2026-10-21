@@ -1,6 +1,6 @@
 Package: io.github.ikiwy.spotify6
 Name: Spotify6
-Version: 1.2.1
+Version: 1.2.2
 Architecture: iphoneos-arm
 Description: Spotify player for iOS 5 and 6, iPhone, iPod and iPad
 Maintainer: kiwy

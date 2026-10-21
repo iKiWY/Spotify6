@@ -44,11 +44,31 @@ Spotify6 is a universal app. On the iPad it has its own layout with a sidebar, a
   </tr>
 </table>
 
+### Classic iOS skin
+
+<table align="center">
+  <tr>
+    <td align="center" valign="top"><b>Home</b><br><img src="docs/screenshots/classic-ios/iphone-home.png" width="190" alt="Classic iOS skin: Home"></td>
+    <td align="center" valign="top"><b>Now playing</b><br><img src="docs/screenshots/classic-ios/iphone-player.png" width="190" alt="Classic iOS skin: Now playing"></td>
+    <td align="center" valign="top"><b>Album</b><br><img src="docs/screenshots/classic-ios/iphone-album.png" width="190" alt="Classic iOS skin: Album"></td>
+  </tr>
+</table>
+<table align="center">
+  <tr>
+    <td align="center" valign="top"><b>iPad Home</b><br><img src="docs/screenshots/classic-ios/ipad-home.png" width="400" alt="Classic iOS skin: iPad Home"></td>
+    <td align="center" valign="top"><b>iPad Playlist</b><br><img src="docs/screenshots/classic-ios/ipad-playlist.png" width="400" alt="Classic iOS skin: iPad Playlist"></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" colspan="2"><b>iPad Now playing</b><br><img src="docs/screenshots/classic-ios/ipad-player.png" width="400" alt="Classic iOS skin: iPad Now playing"></td>
+  </tr>
+</table>
+
 > [!IMPORTANT]
 > Spotify6 is an unofficial project and is **not affiliated with Spotify**. It talks to Spotify through undocumented interfaces using your own account, which may be against Spotify's Terms of Use and could stop working at any time. **Spotify Premium is required.** Use it at your own risk.
 
 ## Features
 
+- **Skins (1.2.2+)**: the dark Spotify look or a Classic iOS look that matches the iOS 6 system apps, switchable in Settings
 - **iPad layout (1.2.0+)**: sidebar with your recent playlists, a player bar, a full-screen player, and both orientations
 - **Quick start (1.2.0+)**: songs start playing a few seconds after you tap them, while the rest downloads, with a green line showing how much is loaded
 - **Taller screens (1.2.0+)**: uses the full 4-inch screen of the iPhone 5 and iPod touch 5

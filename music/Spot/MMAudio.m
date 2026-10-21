@@ -183,16 +183,17 @@ static void fillCb(void *ud, AudioQueueRef q, AudioQueueBufferRef buf){
     MMAudioStream*st=gStream;
     if(st && !st.complete){ gPendingSeek=seconds; return; }   // Spulen braucht das Dateiende -> nach dem Download nachholen
     if(seconds<0)seconds=0; if(gDuration>0&&seconds>gDuration)seconds=gDuration;
+    BOOL wasPaused=gRunning && gPaused;   // pausiert gespult: an der neuen Stelle pausiert bleiben (Play setzt fort)
     if(gAQ){ AudioQueueStop(gAQ,true); AudioQueueDispose(gAQ,true); gAQ=NULL; }
     stb_vorbis_seek(gV,(unsigned int)(seconds*gSampleRate));
-    gBaseTime=seconds; gSilent=0; gRunning=YES; gPaused=NO; cpuReset();
+    gBaseTime=seconds; gSilent=0; gRunning=YES; gPaused=wasPaused; cpuReset();
     AudioStreamBasicDescription a; memset(&a,0,sizeof(a));
     a.mSampleRate=gSampleRate; a.mFormatID=kAudioFormatLinearPCM;
     a.mFormatFlags=kAudioFormatFlagIsSignedInteger|kAudioFormatFlagIsPacked;
     a.mBitsPerChannel=16; a.mChannelsPerFrame=gCh; a.mFramesPerPacket=1; a.mBytesPerFrame=2*gCh; a.mBytesPerPacket=2*gCh;
     if(AudioQueueNewOutput(&a,fillCb,NULL,NULL,NULL,0,&gAQ)!=0) return;
     for(int i=0;i<NUMBUF;i++){ AudioQueueBufferRef b=NULL; AudioQueueAllocateBuffer(gAQ,BUFFRAMES*2*gCh,&b); fillCb(NULL,gAQ,b); }
-    AudioQueueStart(gAQ,NULL);
+    if(!wasPaused) AudioQueueStart(gAQ,NULL);   // pausiert: Puffer sind gefüllt, setPaused:NO startet die Warteschlange
 }
 
 

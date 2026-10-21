@@ -73,7 +73,7 @@ static UIImage* gripIcon(void){
     nav.textColor=[SpotTheme ink]; nav.textAlignment=NSTextAlignmentCenter; [self.view addSubview:nav];
     _table=[[UITableView alloc] initWithFrame:CGRectMake(0,46,W,H-46) style:UITableViewStylePlain];
     _table.backgroundColor=[SpotTheme bg]; _table.separatorStyle=UITableViewCellSeparatorStyleNone; _table.rowHeight=52;
-    _table.dataSource=self; _table.delegate=self; [self.view addSubview:_table];
+    _table.dataSource=self; _table.delegate=self; [SpotTheme skinTable:_table]; [self.view addSubview:_table];
     _table.editing=YES; _table.allowsSelectionDuringEditing=YES;   // Ziehgriff rechts an eingereihten und kommenden Titeln
     __weak MMQueueController*ws=self;
     // lange drücken: Titel-Menü; nach rechts wischen: aus der Warteschlange nehmen (nicht "läuft gerade")
@@ -81,6 +81,7 @@ static UIImage* gripIcon(void){
         if(commit) [s removeAt:ip]; return YES; }
         trackAt:^NSDictionary*(NSIndexPath*ip){ MMQueueController*s=ws; return s?[s trackAt:ip]:nil; }];
     [self reload];
+    [SpotTheme skinPage:self.view];   // iOS 6: echte Navigationsleiste mit "Fertig"
     MMAutoMask(self.view);   // iPad: als Formular-Blatt (540 pt) eingeblendet -> Unteransichten passen sich an
 }
 - (void)reload { MMRootController*r=[MMRootController shared]; _queue=r.queue; _idx=r.queueIndex; _user=r.userQueue; [_table reloadData]; }
@@ -98,22 +99,25 @@ static UIImage* gripIcon(void){
     if(s==2 && ![MMRootController shared].nextUpEnabled) return 0;   // ausgeschaltet: kommende Titel nicht zeigen
     return s==1?(NSInteger)_user.count:[self upNextCount];
 }
-- (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s { return (s==2 || [self tableView:tv numberOfRowsInSection:s])?40:0; }   // "Als Nächstes" immer (Symbol); Warteschlange nur, wenn etwas drin ist
+- (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s { return (s==2 || [self tableView:tv numberOfRowsInSection:s])?([SpotTheme ios6]?26:40):0; }   // "Als Nächstes" immer (Symbol); Warteschlange nur, wenn etwas drin ist
 - (UIView *)tableView:(UITableView *)tv viewForHeaderInSection:(NSInteger)s {
     CGFloat W=tv.bounds.size.width; MMRootController*r=[MMRootController shared];
-    UIView*v=[[UIView alloc] initWithFrame:CGRectMake(0,0,W,40)]; v.backgroundColor=[SpotTheme bg];
-    UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(16,10,W-120,24)];
-    l.text=s==0?L(@"Now playing"):s==1?L(@"Next in queue"):L(@"Next up");
-    l.font=[UIFont boldSystemFontOfSize:17]; l.textColor=[SpotTheme ink]; l.backgroundColor=[UIColor clearColor]; [v addSubview:l];
+    NSString*title=s==0?L(@"Now playing"):s==1?L(@"Next in queue"):L(@"Next up");
+    UIView*v; CGFloat bh=40;
+    if([SpotTheme ios6]){ bh=26; v=[SpotTheme plainSectionHeader:title width:W]; CGRect f=v.frame; f.size.height=bh; v.frame=f; v.userInteractionEnabled=YES;
+        for(UIView*sub in v.subviews) sub.frame=CGRectMake(sub.frame.origin.x,0,sub.frame.size.width,bh); }   // iOS-6-Abschnittskopf, etwas höher für die Knöpfe
+    else { v=[[UIView alloc] initWithFrame:CGRectMake(0,0,W,40)]; v.backgroundColor=[SpotTheme bg];
+        UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(16,10,W-120,24)]; l.text=title;
+        l.font=[UIFont boldSystemFontOfSize:17]; l.textColor=[SpotTheme ink]; l.backgroundColor=[UIColor clearColor]; [v addSubview:l]; }
     if(s==1){   // Warteschlange endlos wiederholen (Symbol grün = an)
-        UIButton*rb=[UIButton buttonWithType:UIButtonTypeCustom]; rb.frame=CGRectMake(W-20-22,22-11-2,44,IB+4);
+        UIButton*rb=[UIButton buttonWithType:UIButtonTypeCustom]; rb.frame=[SpotTheme ios6]?CGRectMake(W-44,0,44,bh):CGRectMake(W-20-22,22-11-2,44,IB+4);
         [rb setImage:repeatIcon(r.repeatQueue?[SpotTheme green]:[SpotTheme muted],r.repeatQueue) forState:UIControlStateNormal];
         [rb addTarget:self action:@selector(toggleRepeat) forControlEvents:UIControlEventTouchUpInside]; [v addSubview:rb];
         UIButton*cb=[UIButton buttonWithType:UIButtonTypeCustom]; cb.frame=CGRectOffset(rb.frame,-44,0);   // links daneben: Warteschlange leeren
         [cb setImage:clearIcon([SpotTheme muted]) forState:UIControlStateNormal];
         [cb addTarget:self action:@selector(askClear) forControlEvents:UIControlEventTouchUpInside]; [v addSubview:cb];
     } else if(s==2){   // "Als Nächstes" an/aus (Symbol wie Wiederholen): aus = nach dem laufenden Titel und der Warteschlange ist Schluss
-        UIButton*nb=[UIButton buttonWithType:UIButtonTypeCustom]; nb.frame=CGRectMake(W-20-22,22-11-2,44,IB+4);
+        UIButton*nb=[UIButton buttonWithType:UIButtonTypeCustom]; nb.frame=[SpotTheme ios6]?CGRectMake(W-44,0,44,bh):CGRectMake(W-20-22,22-11-2,44,IB+4);
         [nb setImage:nextUpIcon(r.nextUpEnabled?[SpotTheme green]:[SpotTheme muted],r.nextUpEnabled) forState:UIControlStateNormal];
         [nb addTarget:self action:@selector(toggleNextUp) forControlEvents:UIControlEventTouchUpInside]; [v addSubview:nb];
     }
@@ -139,7 +143,7 @@ static UIImage* gripIcon(void){
     CGFloat right=MIN(c.contentView.bounds.size.width,c.bounds.size.width);   // Titel/Artist enden vor dem Ziehgriff (sonst laufen lange Titel darunter)
     for(UIView*v in c.subviews) if([NSStringFromClass([v class]) rangeOfString:@"Reorder"].location!=NSNotFound){
         right=MIN(right,v.frame.origin.x);
-        for(UIView*iv in v.subviews) if([iv isKindOfClass:[UIImageView class]]){ UIImageView*im=(UIImageView*)iv;
+        if(![SpotTheme ios6]) for(UIView*iv in v.subviews) if([iv isKindOfClass:[UIImageView class]]){ UIImageView*im=(UIImageView*)iv;   // iOS 6: echter iOS-Griff
             im.image=gripIcon(); im.contentMode=UIViewContentModeCenter; im.frame=v.bounds; } }
     if(tv.editing && [self tableView:tv canMoveRowAtIndexPath:ip]) right=MIN(right,c.bounds.size.width-44);   // Griff ist noch nicht angelegt
     for(NSInteger tag=2;tag<=3;tag++){ UIView*l=[c.contentView viewWithTag:tag]; if(l && right-66-8>40){ l.autoresizingMask=UIViewAutoresizingNone; CGRect f=l.frame; f.size.width=right-66-8; l.frame=f; } }
@@ -158,6 +162,7 @@ static UIImage* gripIcon(void){
     _queue=r.queue; _idx=r.queueIndex; _user=r.userQueue;   // Tabelle hat die Zeile schon verschoben -> nur die Daten nachziehen
 }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];   // Auswahl nicht stehen lassen (sonst bleibt die Schrift weiß)
     if(ip.section==0) return;
     if(ip.section==1) [[MMRootController shared] playUserQueueIndex:ip.row];
     else [[MMRootController shared] playQueueIndex:_idx+1+ip.row];

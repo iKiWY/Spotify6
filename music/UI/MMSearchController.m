@@ -10,11 +10,12 @@
 #import "MMArtistController.h"
 #import "MMSongMenu.h"
 
-@interface MMSearchController () <UITableViewDataSource, UITableViewDelegate, UITextFieldDelegate, UIGestureRecognizerDelegate>
+@interface MMSearchController () <UITableViewDataSource, UITableViewDelegate, UITextFieldDelegate, UIGestureRecognizerDelegate, UISearchBarDelegate>
 @end
 
 @implementation MMSearchController {
     UITextField *_field;
+    UISearchBar *_sbar;   // iOS 6: echte Suchleiste; _field bleibt die Logik dahinter
     UITableView *_table;
     UILabel *_hint;
     UIButton *_unlock;   // "Suche freischalten" ohne eigenen Schlüssel
@@ -43,6 +44,11 @@
     _table=[[UITableView alloc] initWithFrame:CGRectMake(0,98,W,H-98) style:UITableViewStylePlain];
     _table.backgroundColor=[SpotTheme bg]; _table.separatorStyle=UITableViewCellSeparatorStyleNone;
     _table.dataSource=self; _table.delegate=self; _table.rowHeight=MMTrackRowH; _table.contentInset=_table.scrollIndicatorInsets=UIEdgeInsetsMake(0,0,MMPageBottomInset(84),0);
+    [SpotTheme skinTable:_table];
+    if([SpotTheme ios6]){   // echte iOS-Suchleiste unter der Navigationsleiste; das eigene Feld bleibt unsichtbar die Logik
+        box.hidden=YES; _sbar=[[UISearchBar alloc] initWithFrame:CGRectMake(0,44,W,44)]; _sbar.tintColor=[SpotTheme barTint];
+        _sbar.placeholder=_field.placeholder; _sbar.delegate=self; _sbar.autocorrectionType=UITextAutocorrectionTypeNo; _sbar.autoresizingMask=UIViewAutoresizingFlexibleWidth;
+        [self.view addSubview:_sbar]; _table.frame=CGRectMake(0,88,W,H-88); }
     _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_table];   // mit dem Inhaltsbereich (über der Tab-Leiste) mitschrumpfen   // Platz für Now-Playing + Download-Leiste
 
     _hint=[[UILabel alloc] initWithFrame:CGRectMake(20,140,W-40,40)]; _hint.text=L(@"Find millions of songs."); _hint.textColor=[SpotTheme faint]; _hint.font=[SpotTheme sub]; _hint.textAlignment=NSTextAlignmentCenter; _hint.numberOfLines=0; [self.view addSubview:_hint];
@@ -50,6 +56,8 @@
     _unlock=[UIButton buttonWithType:UIButtonTypeCustom]; _unlock.frame=CGRectMake(50,196,W-100,44);
     _unlock.backgroundColor=[SpotTheme green]; _unlock.layer.cornerRadius=22; _unlock.titleLabel.font=[UIFont boldSystemFontOfSize:14];
     [_unlock setTitle:L(@"UNLOCK SEARCH") forState:UIControlStateNormal]; [_unlock setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+    if([SpotTheme ios6]){ _unlock.backgroundColor=[UIColor clearColor]; [_unlock setBackgroundImage:[SpotTheme glossyImage:[SpotTheme green] radius:10] forState:UIControlStateNormal];
+        [_unlock setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal]; [_unlock setTitleShadowColor:[UIColor colorWithWhite:0 alpha:0.4] forState:UIControlStateNormal]; _unlock.titleLabel.shadowOffset=CGSizeMake(0,-1); }
     [_unlock addTarget:self action:@selector(openKeySetup) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:_unlock];
     // Schlüssel ändern/entfernen: lange auf "Suche" drücken
     nav.userInteractionEnabled=YES;
@@ -100,6 +108,7 @@
 - (void)refreshKeyState {
     BOOL has=[MMSpotify hasSearchKey];
     _unlock.hidden=has; _field.enabled=has; _field.superview.alpha=has?1:0.4;
+    _sbar.userInteractionEnabled=has; _sbar.alpha=has?1:0.5;
     if(!has){ _results=nil; _artists=nil; _albums=nil; _secs=nil; [_table reloadData]; _hint.hidden=NO;
         _hint.frame=CGRectMake(20,120,self.view.bounds.size.width-40,64);
         _hint.text=L(@"Search needs your own free Spotify key. Set it up once in about 3 minutes."); }
@@ -114,8 +123,13 @@
     [[MMRootController shared] pushContent:k];
 }
 
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)t { return _field.isFirstResponder && ![t.view isDescendantOfView:_field.superview]; }
-- (void)hideKeyboard { [self.view endEditing:YES]; }
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)t {
+    if(_sbar) return [_sbar isFirstResponder] && ![t.view isDescendantOfView:_sbar];
+    return _field.isFirstResponder && ![t.view isDescendantOfView:_field.superview]; }
+- (void)hideKeyboard { [self.view endEditing:YES]; [_sbar resignFirstResponder]; }
+// iOS 6: die Suchleiste reicht Eingaben an das (unsichtbare) Feld weiter, damit die Suchlogik gleich bleibt
+- (void)searchBar:(UISearchBar *)sb textDidChange:(NSString *)t { _field.text=t; [self fieldChanged]; }
+- (void)searchBarSearchButtonClicked:(UISearchBar *)sb { [sb resignFirstResponder]; _field.text=sb.text; [self doSearch:sb.text]; }
 - (void)scrollViewWillBeginDragging:(UIScrollView *)sv { [self hideKeyboard]; }
 - (BOOL)textFieldShouldReturn:(UITextField *)tf { [tf resignFirstResponder]; [self doSearch:tf.text]; return YES; }
 
@@ -153,11 +167,22 @@ static NSArray* items(NSDictionary*j,NSString*k){ id v=[j[k] isKindOfClass:[NSDi
 - (NSArray *)rowsOf:(NSInteger)s { NSString*k=_secs[s]; return [k isEqualToString:@"recent"]?_recents:[k isEqualToString:@"artists"]?_artists:[k isEqualToString:@"albums"]?_albums:_results; }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return _secs.count; }
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { return [self rowsOf:s].count; }
-- (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s { return 36; }
+- (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s { return [SpotTheme ios6]?22:36; }
 - (UIView *)tableView:(UITableView *)tv viewForHeaderInSection:(NSInteger)s {
+    NSString*k=_secs[s];
+    NSString*title=[k isEqualToString:@"recent"]?L(@"Recent searches"):[k isEqualToString:@"artists"]?L(@"Artists"):[k isEqualToString:@"albums"]?L(@"Albums"):L(@"Songs");
+    if([SpotTheme ios6]){   // iOS-6-Abschnittskopf; "Löschen" rechts in Weiß
+        UIView*v=[SpotTheme plainSectionHeader:title width:tv.bounds.size.width];
+        if([k isEqualToString:@"recent"]){ v.userInteractionEnabled=YES;
+            UIButton*clr=[UIButton buttonWithType:UIButtonTypeCustom]; clr.frame=CGRectMake(tv.bounds.size.width-90,0,80,22);
+            [clr setTitle:L(@"Clear") forState:UIControlStateNormal]; [clr setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+            [clr setTitleShadowColor:[UIColor colorWithWhite:0 alpha:0.44] forState:UIControlStateNormal]; clr.titleLabel.shadowOffset=CGSizeMake(0,1);
+            clr.titleLabel.font=[UIFont boldSystemFontOfSize:14]; clr.contentHorizontalAlignment=UIControlContentHorizontalAlignmentRight;
+            [clr addTarget:self action:@selector(clearRecents) forControlEvents:UIControlEventTouchUpInside]; [v addSubview:clr]; }
+        return v; }
     UIView*v=[[UIView alloc] initWithFrame:CGRectMake(0,0,tv.bounds.size.width,36)]; v.backgroundColor=[SpotTheme bg];
-    UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(16,8,tv.bounds.size.width-32,24)]; NSString*k=_secs[s];
-    l.text=[k isEqualToString:@"recent"]?L(@"Recent searches"):[k isEqualToString:@"artists"]?L(@"Artists"):[k isEqualToString:@"albums"]?L(@"Albums"):L(@"Songs");
+    UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(16,8,tv.bounds.size.width-32,24)];
+    l.text=title;
     l.font=[UIFont boldSystemFontOfSize:17]; l.textColor=[SpotTheme ink]; l.backgroundColor=[UIColor clearColor]; [v addSubview:l];
     if([k isEqualToString:@"recent"]){   // "Löschen" rechts in der Überschrift
         UIButton*clr=[UIButton buttonWithType:UIButtonTypeCustom]; clr.frame=CGRectMake(tv.bounds.size.width-90,4,80,30);
@@ -193,6 +218,7 @@ static NSArray* items(NSDictionary*j,NSString*k){ id v=[j[k] isKindOfClass:[NSDi
 }
 
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];   // Auswahl nicht stehen lassen (sonst bleibt die Schrift weiß)
     [self.view endEditing:YES];
     NSString*k=_secs[ip.section]; NSDictionary*r=[self rowsOf:ip.section][ip.row];
     NSString*kind=[k isEqualToString:@"recent"]?r[@"kind"]:[k isEqualToString:@"artists"]?@"artist":[k isEqualToString:@"albums"]?@"album":@"track";
@@ -204,7 +230,6 @@ static NSArray* items(NSDictionary*j,NSString*k){ id v=[j[k] isKindOfClass:[NSDi
     if([kind isEqual:@"album"]){ [[MMRootController shared] pushContent:[[MMTrackListController alloc] initWithTitle:e[@"name"] path:[@"albums/" stringByAppendingString:e[@"id"]]]]; return; }
     if([k isEqualToString:@"recent"]) [[MMRootController shared] playList:@[[MMSearchController trackOf:e]] index:0];
     else [[MMRootController shared] playList:_results index:ip.row];   // alle gefundenen Titel = Queue
-    if(!MMIsPad()) [[MMRootController shared] openPlayer];   // iPad: nur abspielen, die Leiste unten zeigt den Titel
 }
 - (void)relayoutForSize:(CGSize)size { [_table reloadData]; }   // iPad gedreht: Zellen in neuer Breite
 @end

@@ -40,7 +40,7 @@
 
     // Zahnrad oben rechts: Einstellungen
     UIButton*gear=[UIButton buttonWithType:UIButtonTypeCustom]; gear.frame=CGRectMake(W-48,6,44,38);
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(22,22),NO,0); [[SpotTheme ink] setFill];
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(22,22),NO,0); [[SpotTheme headerInk] setFill];
     UIBezierPath*gp=[UIBezierPath bezierPath];
     for(int i=0;i<16;i++){ CGFloat a=i*M_PI/8-M_PI/16, r=(i%2)?8:10.5; CGPoint q=CGPointMake(11+r*cos(a),11+r*sin(a)); if(i==0)[gp moveToPoint:q]; else [gp addLineToPoint:q]; }
     [gp closePath]; [gp appendPath:[UIBezierPath bezierPathWithArcCenter:CGPointMake(11,11) radius:3.5 startAngle:0 endAngle:2*M_PI clockwise:NO]];
@@ -55,8 +55,8 @@
 
     _table=[[UITableView alloc] initWithFrame:CGRectMake(0,48,W,H-48) style:UITableViewStylePlain];
     _table.backgroundColor=[SpotTheme bg]; _table.separatorColor=[SpotTheme line];
-    _table.dataSource=self; _table.delegate=self; _table.rowHeight=60; _table.contentInset=UIEdgeInsetsMake(0,0,MMPageBottomInset(84),0);   // Platz für untere Leisten
-    _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_table];
+    _table.dataSource=self; _table.delegate=self; _table.rowHeight=[SpotTheme ios6]?45:60; _table.contentInset=UIEdgeInsetsMake(0,0,MMPageBottomInset(84),0);   // Platz für untere Leisten
+    _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [SpotTheme skinTable:_table]; [self.view addSubview:_table];
 
     _hint=[[UILabel alloc] initWithFrame:CGRectMake(20,120,W-40,60)]; _hint.numberOfLines=0; _hint.textColor=[SpotTheme faint]; _hint.font=[SpotTheme sub]; _hint.textAlignment=NSTextAlignmentCenter; [self.view addSubview:_hint];
 
@@ -97,7 +97,7 @@
 // Download-Symbol: weiß, grün solange etwas herunterlädt
 - (void)drawDlBtn {
     BOOL on=[MMSpotify isDownloading]; if(_dlBtn.tag==(on?2:1)) return; _dlBtn.tag=on?2:1;
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(22,22),NO,0); [(on?[SpotTheme green]:[SpotTheme ink]) setStroke];
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(22,22),NO,0); [(on?([SpotTheme ios6]?[UIColor colorWithRed:0.6 green:1 blue:0.65 alpha:1]:[SpotTheme green]):[SpotTheme headerInk]) setStroke];
     UIBezierPath*dc=[UIBezierPath bezierPathWithOvalInRect:CGRectMake(1,1,20,20)]; dc.lineWidth=1.6; [dc stroke];
     UIBezierPath*da=[UIBezierPath bezierPath]; da.lineWidth=1.8; da.lineCapStyle=kCGLineCapRound; da.lineJoinStyle=kCGLineJoinRound;
     [da moveToPoint:CGPointMake(11,6)]; [da addLineToPoint:CGPointMake(11,15.5)]; [da moveToPoint:CGPointMake(7,11.5)]; [da addLineToPoint:CGPointMake(11,15.5)]; [da addLineToPoint:CGPointMake(15,11.5)]; [da stroke];
@@ -203,8 +203,10 @@
     UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:MMCellID(@"r",tv)];
     if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:MMCellID(@"r",tv)];
         c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
-        UIImageView*th=[[UIImageView alloc] initWithFrame:CGRectMake(12,6,48,48)]; th.tag=10; th.contentMode=UIViewContentModeScaleAspectFill; th.clipsToBounds=YES; th.layer.cornerRadius=2; [c.contentView addSubview:th];
-        UILabel*nm=[[UILabel alloc] initWithFrame:CGRectMake(72,0,tv.bounds.size.width-72-40,60)]; nm.tag=11; nm.font=[UIFont boldSystemFontOfSize:16]; nm.textColor=[SpotTheme ink]; [c.contentView addSubview:nm];
+        BOOL six=[SpotTheme ios6];   // iOS 6 wie die Album-Liste der Musik-App: Cover bündig links, große fette Schrift
+        UIImageView*th=[[UIImageView alloc] initWithFrame:six?CGRectMake(0,0,44,44):CGRectMake(12,6,48,48)]; th.tag=10; th.contentMode=UIViewContentModeScaleAspectFill; th.clipsToBounds=YES; th.layer.cornerRadius=six?0:2; [c.contentView addSubview:th];
+        UILabel*nm=[[UILabel alloc] initWithFrame:six?CGRectMake(53,0,tv.bounds.size.width-53-36,44):CGRectMake(72,0,tv.bounds.size.width-72-40,60)]; nm.tag=11; nm.font=[UIFont boldSystemFontOfSize:six?17:16]; nm.textColor=[SpotTheme ink]; [c.contentView addSubview:nm];
+        if(six){ nm.textColor=[SpotTheme ink]; [SpotTheme engrave:nm]; nm.shadowColor=[UIColor colorWithWhite:1 alpha:0.6]; }
         c.accessoryType=UITableViewCellAccessoryNone; }   // keine Pfeile: auf Schwarz kaum sichtbar
     UIImageView*th=(UIImageView*)[c.contentView viewWithTag:10];
     UILabel*nm=(UILabel*)[c.contentView viewWithTag:11];
@@ -234,7 +236,8 @@
 }
 
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
-    [tv deselectRowAtIndexPath:ip animated:YES];
+    if([SpotTheme ios6]){ dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.35*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ [tv deselectRowAtIndexPath:ip animated:NO]; }); }   // iOS 6: gedrückte Zeile bleibt sichtbar, bis die Seite hereingeschoben ist
+    else [tv deselectRowAtIndexPath:ip animated:YES];
     MMTrackListController*tl;
     NSInteger r=[self lrow:ip.row];
     if(r<0) tl=[[MMTrackListController alloc] initWithTitle:L(@"Downloaded") path:@"me/downloads"];

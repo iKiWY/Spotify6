@@ -22,6 +22,7 @@
 #import "mbedtls/entropy.h"
 #import "mbedtls/aes.h"
 #import "mbedtls/x509_crt.h"
+#import "mbedtls/error.h"
 #import "psa/crypto.h"
 #import "MMCovers.h"
 
@@ -57,6 +58,10 @@ NSString *MMPath(NSString *relative){ return [MMDataDir() stringByAppendingPathC
 void MMLog(NSString *fmt, ...){ va_list a; va_start(a,fmt); NSString*s=[[NSString alloc] initWithFormat:fmt arguments:a]; va_end(a); slog(@"%@",s); }
 static NSString*hexd(const unsigned char*b,int n);
 static NSData* httpsReq(NSString*method,NSString*host,NSString*path,NSArray*extra,NSData*body,int*statusOut);
+// Streaming: onHead(Status, Länge oder -1) einmal, dann onData je Häppchen (NO = abbrechen). Erfolg = leeres NSData, Fehler/Abbruch = nil
+typedef void(^MMHttpHead)(NSInteger status,long long length);
+typedef BOOL(^MMHttpData)(const void*bytes,size_t n);
+static NSData* httpsReqEx(NSString*method,NSString*host,NSString*path,NSArray*extra,NSData*body,int*statusOut,MMHttpHead onHead,MMHttpData onData);
 static NSString* b64std(NSData*data);
 static const unsigned char AUDIO_IV[16]={0x72,0xe0,0x67,0xfb,0xdd,0xcb,0xcf,0x77,0xeb,0xe8,0xbc,0x64,0x3f,0x63,0x0d,0x93};
 static void pstr(NSMutableData*d,int f,NSString*s){pbytes(d,f,[s dataUsingEncoding:NSUTF8StringEncoding]);}
@@ -236,17 +241,21 @@ static NSString*hexd(const unsigned char*b,int n){NSMutableString*m=[NSMutableSt
 @end
 @implementation MMCdnLoad
 // onResponse sagt, ob der Aufrufer die Häppchen selbst nimmt (Wiedergabe während des Downloads); sonst wird gesammelt
-- (void)connection:(NSURLConnection *)c didReceiveResponse:(NSURLResponse *)r {
-    if(responded && chunked){ [c cancel]; error=[NSError errorWithDomain:@"CDN" code:-3 userInfo:@{NSLocalizedDescriptionKey:@"second response"}]; done=YES; return; }   // Puffer liegt schon an
-    responded=YES;
-    status=[r isKindOfClass:[NSHTTPURLResponse class]]?((NSHTTPURLResponse*)r).statusCode:200; expected=r.expectedContentLength; received=0;
+// head/body: dieselbe Logik für NSURLConnection und den Download über das eigene TLS. NO = abbrechen (error ist gesetzt)
+- (BOOL)head:(NSInteger)st length:(long long)len {
+    if(responded && chunked){ error=[NSError errorWithDomain:@"CDN" code:-3 userInfo:@{NSLocalizedDescriptionKey:@"second response"}]; done=YES; return NO; }   // Puffer liegt schon an
+    responded=YES; status=st; expected=len; received=0;
     chunked=(status==200 && onChunk && onResponse && expected<=60LL*1024*1024 && onResponse(expected));   // unsinnige Länge: normal laden
-    data=chunked?nil:[NSMutableData dataWithCapacity:expected>0?(NSUInteger)expected:4<<20]; }
-- (void)connection:(NSURLConnection *)c didReceiveData:(NSData *)d {
+    data=chunked?nil:[NSMutableData dataWithCapacity:expected>0?(NSUInteger)expected:4<<20]; return YES; }
+- (BOOL)body:(NSData *)d {
     received+=d.length;
-    if(chunked){ if(!onChunk(d)){ [c cancel]; error=[NSError errorWithDomain:@"CDN" code:-4 userInfo:@{NSLocalizedDescriptionKey:@"cancelled"}]; done=YES; return; } }   // überholt: abbrechen
+    if(chunked){ if(!onChunk(d)){ error=[NSError errorWithDomain:@"CDN" code:-4 userInfo:@{NSLocalizedDescriptionKey:@"cancelled"}]; done=YES; return NO; } }   // überholt: abbrechen
     else [data appendData:d];
-    if(progress && expected>0){ double f=(double)received/expected; if(f-lastFrac>=0.02 || f>=1){ lastFrac=f; progress(f); } } }   // höchstens alle 2 %
+    if(progress && expected>0){ double f=(double)received/expected; if(f-lastFrac>=0.02 || f>=1){ lastFrac=f; progress(f); } }   // höchstens alle 2 %
+    return YES; }
+- (void)connection:(NSURLConnection *)c didReceiveResponse:(NSURLResponse *)r {
+    if(![self head:[r isKindOfClass:[NSHTTPURLResponse class]]?((NSHTTPURLResponse*)r).statusCode:200 length:r.expectedContentLength]) [c cancel]; }
+- (void)connection:(NSURLConnection *)c didReceiveData:(NSData *)d { if(![self body:d]) [c cancel]; }
 - (void)connectionDidFinishLoading:(NSURLConnection *)c { done=YES; }
 - (void)connection:(NSURLConnection *)c didFailWithError:(NSError *)e { error=e; done=YES; }
 @end
@@ -259,8 +268,24 @@ static NSMutableData* cdnFetchEx(NSString*url, NSError**err, void(^progress)(dou
     MMCdnLoad*l=[MMCdnLoad new]; l->progress=progress; l->onResponse=onResponse; l->onChunk=onChunk;
     NSURLConnection*c=rq.URL?[[NSURLConnection alloc] initWithRequest:rq delegate:l startImmediately:NO]:nil;
     if(!c){ if(err)*err=[NSError errorWithDomain:@"CDN" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"bad CDN URL"}]; return nil; }
-    [c scheduleInRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode]; [c start];
-    while(!l->done) @autoreleasepool { [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.5]]; }
+    // Lehnt iOS den CDN-Host ab (iOS 7 kennt dessen Zertifikate nicht), läuft derselbe Download über das eigene TLS; der Host merkt sich das
+    static NSMutableSet*own; static dispatch_once_t oo; dispatch_once(&oo,^{ own=[NSMutableSet set]; });
+    NSString*host=rq.URL.host?:@""; BOOL viaOwn; @synchronized(own){ viaOwn=[own containsObject:host]; }
+    if(!viaOwn){
+        [c scheduleInRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode]; [c start];
+        while(!l->done) @autoreleasepool { [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.5]]; }
+        NSInteger ec=l->error.code; BOOL tlsRefused=!l->responded && ((ec<=-1200 && ec>=-1206) || (ec<=-9800 && ec>=-9850));   // Zertifikat/SSL, noch keine Antwort
+        if(tlsRefused){ @synchronized(own){ [own addObject:host]; } slog(@"cdn: %@ via own TLS (iOS HTTPS refused: %ld)",host,(long)ec); viaOwn=YES; }
+    }
+    if(viaOwn){
+        MMCdnLoad*l2=[MMCdnLoad new]; l2->progress=progress; l2->onResponse=onResponse; l2->onChunk=onChunk; l=l2;
+        NSString*path=rq.URL.path.length?rq.URL.path:@"/"; if(rq.URL.query.length) path=[path stringByAppendingFormat:@"?%@",rq.URL.query];
+        int hst=0; NSData*r=httpsReqEx(@"GET",host,path,@[],nil,&hst,
+            ^(NSInteger st,long long len){ [l2 head:st length:len]; },
+            ^BOOL(const void*b,size_t n){ return [l2 body:[NSData dataWithBytesNoCopy:(void*)b length:n freeWhenDone:NO]]; });
+        if(!r && !l2->error) l2->error=[NSError errorWithDomain:@"CDN" code:-5 userInfo:@{NSLocalizedDescriptionKey:@"download over own TLS failed"}];
+        l2->done=YES;
+    }
     if(l->error){ if(err)*err=l->error; return nil; }
     if(l->status!=200){ if(err)*err=[NSError errorWithDomain:@"HTTP" code:l->status userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"HTTP %ld",(long)l->status]}]; return nil; }
     if(l->chunked && l->expected>0 && l->received!=l->expected){ if(err)*err=[NSError errorWithDomain:@"CDN" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"download incomplete"}]; return nil; }
@@ -454,8 +479,15 @@ static BOOL ensureApi(NSString**err){
     if(!gClientToken){ gClientToken=getClientToken(); }
     if(!gClientToken){ if(err)*err=@"No client token"; return NO; }
     if(!gSpclient){
+        // Server für Titel/Schlüssel: erst über iOS, dann über das eigene TLS (iOS 7 und manche Netze lehnen das iOS-HTTPS ab),
+        // zuletzt der allgemeine Name, der immer auf einen solchen Server zeigt. Vorher hieß das: kein Titel spielt ("No spclient host").
         NSData*spd=[NSData dataWithContentsOfURL:[NSURL URLWithString:@"https://apresolve.spotify.com/?type=spclient"]];
-        gSpclient=spd?[NSJSONSerialization JSONObjectWithData:spd options:0 error:NULL][@"spclient"][0]:nil;
+        if(!spd.length){ int st=0; spd=httpsReq(@"GET",@"apresolve.spotify.com",@"/?type=spclient",@[],nil,&st); if(st!=200) spd=nil;
+            slog(@"spclient: iOS HTTPS failed, own TLS %@",spd.length?@"ok":@"failed too"); }
+        id j=spd.length?[NSJSONSerialization JSONObjectWithData:spd options:0 error:NULL]:nil;
+        id list=[j isKindOfClass:[NSDictionary class]]?j[@"spclient"]:nil;
+        gSpclient=([list isKindOfClass:[NSArray class]] && [list count] && [list[0] isKindOfClass:[NSString class]])?list[0]:nil;
+        if(!gSpclient){ gSpclient=@"spclient.wg.spotify.com:443"; slog(@"spclient: apresolve unavailable, using %@",gSpclient); }
     }
     if(!gSpclient){ if(err)*err=@"No spclient host"; return NO; }
     return YES;
@@ -1056,7 +1088,7 @@ static NSInteger gPlayDownloads=0; static NSString*gStreamingId=nil, *gDeferredP
 // Für "Fehlerinfos": nur die aussagekräftigen Zeilen, Download-Adressen ohne Schlüssel
 + (NSString *)diagnosticLog {
     NSString*all=[NSString stringWithContentsOfFile:MMPath(@".spotify-log") encoding:NSUTF8StringEncoding error:NULL]?:@"";   // Datei wird bei jeder Zeile neu geschrieben
-    NSArray*keys=@[@"=== login",@"apresolve",@"ap ",@"handshake",@"no reply",@"Login",@"AuthFailure",@"reconnect",@"account type",@"country",@"resolve",@"AesKeyError",@"AudioKey",@"cdn",@"CDN",@"playTrack",@"fail",@"timeout",@"Unexpected",@"not reachable",@"dl ",@"test:"];
+    NSArray*keys=@[@"=== login",@"tls:",@"apresolve",@"ap ",@"handshake",@"no reply",@"Login",@"AuthFailure",@"reconnect",@"account type",@"country",@"resolve",@"AesKeyError",@"AudioKey",@"cdn",@"CDN",@"playTrack",@"fail",@"timeout",@"Unexpected",@"not reachable",@"dl ",@"test:"];
     NSMutableArray*out=[NSMutableArray array];
     NSRegularExpression*url=[NSRegularExpression regularExpressionWithPattern:@"(https?://[^/\\s]+)\\S*" options:0 error:NULL];
     for(NSString*l in [all componentsSeparatedByString:@"\n"]){
@@ -1066,6 +1098,12 @@ static NSInteger gPlayDownloads=0; static NSString*gStreamingId=nil, *gDeferredP
     }
     if(out.count>70) [out removeObjectsInRange:NSMakeRange(0,out.count-70)];
     return [out componentsJoinedByString:@"\n"];
+}
++ (NSData *)httpsGet:(NSURL *)url {
+    if(![url.scheme isEqualToString:@"https"] || !url.host.length) return nil;
+    NSString*path=url.path.length?url.path:@"/"; if(url.query.length) path=[path stringByAppendingFormat:@"?%@",url.query];
+    int st=0; NSData*d=httpsReq(@"GET",url.host,path,@[],nil,&st);
+    return (st==200 && d.length)?d:nil;
 }
 + (NSString *)deviceModel { char b[64]={0}; size_t n=sizeof b; sysctlbyname("hw.machine",b,&n,NULL,0); return [NSString stringWithUTF8String:b]; }
 + (BOOL)isLoading { return gLoading; }
@@ -1098,9 +1136,9 @@ static NSData* dechunk(NSData*d){
         [out appendBytes:b+p length:sz]; p+=sz+2; }
     return out;
 }
-// method GET/POST, extra = Array von Header-Zeilen ("Key: Value"), body optional. statusOut optional.
-static NSData* httpsReq(NSString*method,NSString*host,NSString*path,NSArray*extra,NSData*body,int*statusOut){
-    if(statusOut)*statusOut=0;
+// Ein Versuch. only12 = nur TLS 1.2 anbieten. *hsFail = 1, wenn die Verbindung stand, aber der TLS-Handshake scheiterte.
+static NSData* httpsReqOnce(NSString*method,NSString*host,NSString*path,NSArray*extra,NSData*body,int*statusOut,BOOL only12,int*hsFail,MMHttpHead onHead,MMHttpData onData){
+    if(statusOut)*statusOut=0; if(hsFail)*hsFail=0;
     mbedtls_net_context srv; mbedtls_ssl_context ssl; mbedtls_ssl_config conf; mbedtls_ctr_drbg_context ctr;
     mbedtls_net_init(&srv); mbedtls_ssl_init(&ssl); mbedtls_ssl_config_init(&conf); mbedtls_ctr_drbg_init(&ctr);
     NSData*result=nil; const char*h=[host UTF8String];
@@ -1112,10 +1150,23 @@ static NSData* httpsReq(NSString*method,NSString*host,NSString*path,NSArray*extr
     mbedtls_ssl_conf_authmode(&conf,MBEDTLS_SSL_VERIFY_REQUIRED);   // Zertifikat + Hostname müssen stimmen
     mbedtls_ssl_conf_ca_chain(&conf,ca,NULL);
     mbedtls_ssl_conf_rng(&conf,mbedtls_ctr_drbg_random,&ctr);
+    if(only12) mbedtls_ssl_conf_max_tls_version(&conf,MBEDTLS_SSL_VERSION_TLS1_2);
+    mbedtls_ssl_conf_read_timeout(&conf,20000);   // 20 s ohne Daten = aufgeben (sonst hängt ein stockender Download für immer)
+#ifdef DEBUG
+    if(!only12 && [[NSFileManager defaultManager] fileExistsAtPath:MMPath(@".tls13fail")]){ slog(@"tls: handshake %@ fail (test: .tls13fail)",host); if(hsFail)*hsFail=1; goto done; }   // Test des Rückfalls auf TLS 1.2
+#endif
     if(mbedtls_ssl_setup(&ssl,&conf)!=0) goto done;
     mbedtls_ssl_set_hostname(&ssl,h);
-    mbedtls_ssl_set_bio(&ssl,&srv,mbedtls_net_send,mbedtls_net_recv,NULL);
-    { int hs; while((hs=mbedtls_ssl_handshake(&ssl))!=0){ if(hs!=MBEDTLS_ERR_SSL_WANT_READ&&hs!=MBEDTLS_ERR_SSL_WANT_WRITE){ slog(@"tls: handshake %@ fail -0x%04x verify=0x%x",host,-hs,(unsigned)mbedtls_ssl_get_verify_result(&ssl)); goto done; } } }
+    mbedtls_ssl_set_bio(&ssl,&srv,mbedtls_net_send,mbedtls_net_recv,mbedtls_net_recv_timeout);
+    { int hs; while((hs=mbedtls_ssl_handshake(&ssl))!=0){ if(hs!=MBEDTLS_ERR_SSL_WANT_READ&&hs!=MBEDTLS_ERR_SSL_WANT_WRITE){
+            // lesbar: Fehlertext, angebotene Versionen und (falls geprüft) was am Zertifikat nicht stimmt
+            char et[96]=""; mbedtls_strerror(hs,et,sizeof et); uint32_t vf=mbedtls_ssl_get_verify_result(&ssl); char vi[160]="";
+            if(vf && vf!=0xffffffff){ mbedtls_x509_crt_verify_info(vi,sizeof vi,"",vf); for(char*c=vi;*c;c++) if(*c=='\n') *c=';'; }
+            slog(@"tls: handshake %@ fail -0x%04x %s (offered %@)%@",host,-hs,et,only12?@"TLS 1.2":@"TLS 1.2+1.3",
+                 vf==0xffffffff?@", certificate not checked yet":vf?[NSString stringWithFormat:@", certificate: %s",vi]:@"");
+            if(hsFail)*hsFail=1; goto done; } } }
+    { static NSMutableSet*seen; @synchronized([NSObject class]){ if(!seen) seen=[NSMutableSet set];   // einmal je Host: welche Version zustande kam
+        if(![seen containsObject:host]){ [seen addObject:host]; slog(@"tls: %@ ok, %s",host,mbedtls_ssl_get_version(&ssl)); } } }
     { NSMutableString*req=[NSMutableString stringWithFormat:@"%@ %@ HTTP/1.1\r\nHost: %@\r\nConnection: close\r\n",method,path,host];
       for(NSString*x in extra)[req appendFormat:@"%@\r\n",x];
       [req appendFormat:@"Content-Length: %lu\r\n\r\n",(unsigned long)body.length];
@@ -1123,22 +1174,53 @@ static NSData* httpsReq(NSString*method,NSString*host,NSString*path,NSArray*extr
       if(body.length)[rd appendData:body];
       const unsigned char*wp=rd.bytes; size_t wl=rd.length,wo=0;
       while(wo<wl){ int w=mbedtls_ssl_write(&ssl,wp+wo,wl-wo); if(w<=0){ if(w==MBEDTLS_ERR_SSL_WANT_READ||w==MBEDTLS_ERR_SSL_WANT_WRITE)continue; goto done; } wo+=w; } }
-    { NSMutableData*resp=[NSMutableData data]; unsigned char buf[4096];
-      for(;;){ int rr=mbedtls_ssl_read(&ssl,buf,sizeof(buf)); if(rr==MBEDTLS_ERR_SSL_WANT_READ||rr==MBEDTLS_ERR_SSL_WANT_WRITE)continue; if(rr<=0)break; [resp appendBytes:buf length:rr]; }
-      NSData*sep=[@"\r\n\r\n" dataUsingEncoding:NSUTF8StringEncoding];
-      NSRange sr=[resp rangeOfData:sep options:0 range:NSMakeRange(0,resp.length)];
+    { NSMutableData*resp=[NSMutableData data]; unsigned char buf[16384]; NSData*sep=[@"\r\n\r\n" dataUsingEncoding:NSUTF8StringEncoding];
+      BOOL streaming=NO, stopped=NO; long long want=-1, got=0;
+      for(;;){ int rr=mbedtls_ssl_read(&ssl,buf,sizeof(buf)); if(rr==MBEDTLS_ERR_SSL_WANT_READ||rr==MBEDTLS_ERR_SSL_WANT_WRITE)continue; if(rr<=0)break;
+        if(streaming){ got+=rr; if(!onData(buf,rr)){ stopped=YES; break; } if(want>=0 && got>=want) break; continue; }
+        [resp appendBytes:buf length:rr];
+        if(onData){ NSRange hr=[resp rangeOfData:sep options:0 range:NSMakeRange(0,resp.length)];   // Kopf da: ab jetzt durchreichen (nicht bei chunked)
+          if(hr.location!=NSNotFound){
+            NSString*hs=[[NSString alloc] initWithData:[resp subdataWithRange:NSMakeRange(0,hr.location)] encoding:NSUTF8StringEncoding]?:@"";
+            if([hs rangeOfString:@"chunked" options:NSCaseInsensitiveSearch].location==NSNotFound){
+              NSArray*pp=[hs componentsSeparatedByString:@" "]; NSInteger st=pp.count>1?[pp[1] integerValue]:0; if(statusOut)*statusOut=(int)st;
+              NSRange cl=[hs rangeOfString:@"\r\nContent-Length:" options:NSCaseInsensitiveSearch];
+              if(cl.location!=NSNotFound) want=[[hs substringFromIndex:NSMaxRange(cl)] longLongValue];
+              streaming=YES; if(onHead) onHead(st,want);
+              NSUInteger bo=hr.location+4; got=resp.length-bo;
+              if(got>0 && !onData((const unsigned char*)resp.bytes+bo,(size_t)got)){ stopped=YES; break; }
+              resp=nil; if(want>=0 && got>=want) break; } } } }
+      if(streaming){ if(!stopped && (want<0 || got>=want)) result=[NSData data]; }   // Erfolg: alles durchgereicht
+      NSRange sr=resp?[resp rangeOfData:sep options:0 range:NSMakeRange(0,resp.length)]:NSMakeRange(NSNotFound,0);
       if(sr.location!=NSNotFound){
         NSString*hstr=[[NSString alloc] initWithData:[resp subdataWithRange:NSMakeRange(0,sr.location)] encoding:NSUTF8StringEncoding];
         if(statusOut){ NSArray*pp=[hstr componentsSeparatedByString:@" "]; if(pp.count>1)*statusOut=[pp[1] intValue]; }
         NSData*bd=[resp subdataWithRange:NSMakeRange(sr.location+4,resp.length-sr.location-4)];
         if([hstr rangeOfString:@"chunked" options:NSCaseInsensitiveSearch].location!=NSNotFound) bd=dechunk(bd);
         result=bd;
+        if(onData){ NSInteger st=statusOut?*statusOut:200; if(onHead) onHead(st,(long long)bd.length);   // chunked im Streaming-Modus: am Stück
+            result=(!bd.length || onData(bd.bytes,bd.length))?[NSData data]:nil; }
       }
     }
 done:
     mbedtls_ssl_close_notify(&ssl);
     mbedtls_net_free(&srv); mbedtls_ssl_free(&ssl); mbedtls_ssl_config_free(&conf); mbedtls_ctr_drbg_free(&ctr);
     return result;
+}
+// method GET/POST, extra = Array von Header-Zeilen ("Key: Value"), body optional. statusOut optional.
+// Scheitert der Handshake (manche Netze, Proxys oder Firewalls lassen TLS 1.3 nicht durch oder verändern es), einmal mit nur TLS 1.2
+// nachfassen; klappt das, bleibt dieser Host bis zum Neustart bei TLS 1.2. Vor dem Senden gescheitert -> Wiederholen ist auch für POST sicher.
+static NSData* httpsReq(NSString*method,NSString*host,NSString*path,NSArray*extra,NSData*body,int*statusOut){ return httpsReqEx(method,host,path,extra,body,statusOut,nil,nil); }
+static NSData* httpsReqEx(NSString*method,NSString*host,NSString*path,NSArray*extra,NSData*body,int*statusOut,MMHttpHead onHead,MMHttpData onData){
+    static NSMutableSet*only12; @synchronized([NSObject class]){ if(!only12) only12=[NSMutableSet set]; }
+    BOOL o12; @synchronized(only12){ o12=[only12 containsObject:host]; }
+    int hs=0; NSData*r=httpsReqOnce(method,host,path,extra,body,statusOut,o12,&hs,onHead,onData);
+    if(r || !hs || o12) return r;
+    slog(@"tls: %@ retry with TLS 1.2 only",host);
+    r=httpsReqOnce(method,host,path,extra,body,statusOut,YES,&hs,onHead,onData);
+    if(r){ @synchronized(only12){ [only12 addObject:host]; } slog(@"tls: %@ works with TLS 1.2 only, using that until restart",host); }
+    else if(hs) slog(@"tls: %@ fails with TLS 1.3 and 1.2: HTTPS to Spotify is blocked or altered on this network or device (proxy, firewall, VPN or a tweak)",host);
+    return r;
 }
 
 // Standard-Base64 (mit Padding) für Basic-Auth.

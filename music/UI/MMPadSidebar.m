@@ -39,29 +39,34 @@ static UIImage* sideIcon(NSString*name, UIColor*c, CGFloat s){
 
 - (id)initWithFrame:(CGRect)f {
     if(!(self=[super initWithFrame:f])) return nil;
-    self.backgroundColor=[UIColor colorWithRed:0.07 green:0.07 blue:0.08 alpha:1];
+    BOOL six=[SpotTheme ios6];
+    self.backgroundColor=six?[SpotTheme sourceListColor]:[UIColor colorWithRed:0.07 green:0.07 blue:0.08 alpha:1];
     CGFloat W=f.size.width, H=f.size.height;
     _mainKeys=@[@"home",@"browse",@"search",@"library"];
     NSArray*titles=@[L(@"Home"),L(@"Browse"),L(@"Search"),L(@"Library")];
     _mainBtns=[NSMutableArray array]; CGFloat y=10;
+    if(six){   // iOS 6: oben dieselbe grüne Leiste wie über dem Inhalt (wie eine geteilte Ansicht)
+        UINavigationBar*nb=[[UINavigationBar alloc] initWithFrame:CGRectMake(0,0,W,44)]; nb.tintColor=[SpotTheme barTint]; nb.autoresizingMask=UIViewAutoresizingFlexibleWidth;
+        [nb setItems:@[[[UINavigationItem alloc] initWithTitle:@"Spotify"]] animated:NO]; nb.userInteractionEnabled=NO; [self addSubview:nb]; y+=44; }
     for(NSUInteger i=0;i<_mainKeys.count;i++,y+=ROW_H) [_mainBtns addObject:[self rowButton:_mainKeys[i] title:titles[i] y:y]];
     y+=10;
-    UIView*ln=[[UIView alloc] initWithFrame:CGRectMake(16,y,W-32,1)]; ln.backgroundColor=[SpotTheme line]; ln.autoresizingMask=UIViewAutoresizingFlexibleWidth; [self addSubview:ln];
+    [self lineAt:y];
     y+=12;
     UILabel*hd=[[UILabel alloc] initWithFrame:CGRectMake(20,y,W-40,16)]; hd.font=[UIFont boldSystemFontOfSize:11]; hd.textColor=[SpotTheme faint];
     hd.backgroundColor=[UIColor clearColor]; hd.text=[L(@"Recent Playlists") uppercaseString]; [self addSubview:hd];
+    if(six){ hd.textColor=[UIColor colorWithRed:0.43 green:0.46 blue:0.51 alpha:1]; hd.shadowColor=[UIColor colorWithWhite:1 alpha:0.7]; hd.shadowOffset=CGSizeMake(0,1); }
     y+=22;
     CGFloat foot=2*ROW_H+12; _tableY=y; _showCF=YES;
     _table=[[UITableView alloc] initWithFrame:CGRectMake(0,y,W,H-y-foot) style:UITableViewStylePlain];
     _table.backgroundColor=[UIColor clearColor]; _table.separatorStyle=UITableViewCellSeparatorStyleNone; _table.rowHeight=PL_ROW_H;
     _table.dataSource=self; _table.delegate=self; _table.autoresizingMask=UIViewAutoresizingFlexibleHeight|UIViewAutoresizingFlexibleWidth;
     [self addSubview:_table];
-    _footLine=[[UIView alloc] initWithFrame:CGRectMake(16,H-foot,W-32,1)]; _footLine.backgroundColor=[SpotTheme line]; [self addSubview:_footLine];
+    _footLine=[self lineAt:H-foot];
     _footBtns=[NSMutableArray array];
     UIButton*cf=[self rowButton:@"coverflow" title:L(@"Cover Flow") y:H-foot+6]; UIButton*st=[self rowButton:@"settings" title:L(@"Settings") y:H-foot+6+ROW_H];
     for(UIButton*b in @[cf,st]) [_footBtns addObject:b];
     // rechte Kante: feine Linie zum Inhalt
-    UIView*edge=[[UIView alloc] initWithFrame:CGRectMake(W-1,0,1,H)]; edge.backgroundColor=[SpotTheme line];
+    UIView*edge=[[UIView alloc] initWithFrame:CGRectMake(W-1,0,1,H)]; edge.backgroundColor=six?[UIColor colorWithWhite:0.58 alpha:1]:[SpotTheme line];
     edge.autoresizingMask=UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleHeight; [self addSubview:edge];
     [self setSelectedKey:@"home"];
     [self reloadPlaylists];
@@ -80,7 +85,7 @@ static UIImage* sideIcon(NSString*name, UIColor*c, CGFloat s){
         UIGraphicsBeginImageContextWithOptions(CGSizeMake(26,26),NO,0);   // Pfeil nach unten auf dunklem Kreis
         [[UIColor colorWithWhite:0 alpha:0.6] setFill]; [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(0,0,26,26)] fill];
         UIBezierPath*p=[UIBezierPath bezierPath]; p.lineWidth=2; p.lineCapStyle=kCGLineCapRound; p.lineJoinStyle=kCGLineJoinRound;
-        [p moveToPoint:CGPointMake(8,11)]; [p addLineToPoint:CGPointMake(13,16)]; [p addLineToPoint:CGPointMake(18,11)]; [[SpotTheme ink] setStroke]; [p stroke];
+        [p moveToPoint:CGPointMake(8,11)]; [p addLineToPoint:CGPointMake(13,16)]; [p addLineToPoint:CGPointMake(18,11)]; [[SpotTheme chromeInk] setStroke]; [p stroke];
         [back setImage:UIGraphicsGetImageFromCurrentImageContext() forState:UIControlStateNormal]; UIGraphicsEndImageContext();
         [back addTarget:self action:@selector(coverBack) forControlEvents:UIControlEventTouchUpInside]; [_coverBox addSubview:back];
         [self addSubview:_coverBox];
@@ -113,7 +118,7 @@ static UIImage* sideIcon(NSString*name, UIColor*c, CGFloat s){
 - (void)layoutFooter {
     CGFloat W=self.bounds.size.width, H=self.bounds.size.height; NSArray*keys=[self footKeys];
     BOOL inList=(_coverBox!=nil); CGFloat foot=inList?0:keys.count*ROW_H+12;
-    _footLine.hidden=inList; _footLine.frame=CGRectMake(16,H-foot,W-32,1);
+    _footLine.hidden=inList; _footLine.frame=[SpotTheme ios6]?CGRectMake(0,H-foot,W,2):CGRectMake(16,H-foot,W-32,1);
     for(UIButton*b in _footBtns){ NSUInteger i=[keys indexOfObject:b.accessibilityLabel];
         b.hidden=inList || i==NSNotFound; if(i!=NSNotFound) b.frame=CGRectMake(0,H-foot+6+i*ROW_H,W,ROW_H); }
     _table.frame=CGRectMake(0,_tableY,W,H-_tableY-foot);
@@ -121,10 +126,29 @@ static UIImage* sideIcon(NSString*name, UIColor*c, CGFloat s){
     if(!UIEdgeInsetsEqualToEdgeInsets(_table.contentInset,in)){ _table.contentInset=_table.scrollIndicatorInsets=in; [_table reloadData]; }
 }
 
+// Trennlinie: iOS 6 eingeprägt (dunkel + weiß) über die ganze Breite, sonst fein und eingerückt
+- (UIView *)lineAt:(CGFloat)y {
+    CGFloat W=self.bounds.size.width; BOOL six=[SpotTheme ios6];
+    UIView*ln=[[UIView alloc] initWithFrame:six?CGRectMake(0,y,W,2):CGRectMake(16,y,W-32,1)]; ln.autoresizingMask=UIViewAutoresizingFlexibleWidth;
+    ln.backgroundColor=six?[UIColor whiteColor]:[SpotTheme line];
+    if(six){ UIView*d=[[UIView alloc] initWithFrame:CGRectMake(0,0,W,1)]; d.backgroundColor=[UIColor colorWithWhite:0.76 alpha:1]; d.autoresizingMask=UIViewAutoresizingFlexibleWidth; [ln addSubview:d]; }
+    [self addSubview:ln]; return ln;
+}
+// Farbe und Grund einer Zeile je nach Auswahl. iOS 6: gewählt = grüner Verlauf, weiße Schrift mit Schatten
+- (void)styleLabel:(UILabel *)l on:(BOOL)on {
+    if(![SpotTheme ios6]){ l.textColor=on?[SpotTheme ink]:[SpotTheme muted]; return; }
+    l.textColor=on?[UIColor whiteColor]:[SpotTheme ink];
+    l.shadowColor=on?[UIColor colorWithWhite:0 alpha:0.35]:[UIColor colorWithWhite:1 alpha:0.6]; l.shadowOffset=CGSizeMake(0,on?-1:1);
+}
+- (UIImage *)iconFor:(NSString *)k on:(BOOL)on {
+    if(![SpotTheme ios6]){ UIColor*c=on?[SpotTheme ink]:[SpotTheme muted]; return [_mainKeys containsObject:k]?MMTabIcon(k,c,24):sideIcon(k,c,24); }
+    UIColor*c=on?[UIColor whiteColor]:[UIColor colorWithWhite:0.36 alpha:1];
+    return [_mainKeys containsObject:k]?[SpotTheme glyph:[SpotTheme tabGlyph:k] color:c]:sideIcon(k,c,24);
+}
 - (UIButton *)rowButton:(NSString *)key title:(NSString *)title y:(CGFloat)y {
     UIButton*b=[UIButton buttonWithType:UIButtonTypeCustom]; b.frame=CGRectMake(0,y,self.bounds.size.width,ROW_H);
     b.accessibilityLabel=key; [b addTarget:self action:@selector(tapRow:) forControlEvents:UIControlEventTouchUpInside];
-    UIImageView*iv=[[UIImageView alloc] initWithFrame:CGRectMake(20,(ROW_H-24)/2,24,24)]; iv.tag=99; [b addSubview:iv];
+    UIImageView*iv=[[UIImageView alloc] initWithFrame:[SpotTheme ios6]?CGRectMake(17,(ROW_H-30)/2,30,30):CGRectMake(20,(ROW_H-24)/2,24,24)]; iv.tag=99; iv.contentMode=UIViewContentModeCenter; [b addSubview:iv];
     UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(58,0,self.bounds.size.width-70,ROW_H)]; l.text=title; l.font=[UIFont boldSystemFontOfSize:15];
     l.backgroundColor=[UIColor clearColor]; l.tag=98; [b addSubview:l];
     [self addSubview:b]; return b;
@@ -134,10 +158,11 @@ static UIImage* sideIcon(NSString*name, UIColor*c, CGFloat s){
 - (void)setSelectedKey:(NSString *)key {
     _sel=key;
     for(UIButton*b in [_mainBtns arrayByAddingObjectsFromArray:_footBtns]){
-        NSString*k=b.accessibilityLabel; BOOL on=[k isEqualToString:key]; UIColor*c=on?[SpotTheme ink]:[SpotTheme muted];
-        ((UIImageView*)[b viewWithTag:99]).image=[_mainKeys containsObject:k]?MMTabIcon(k,c,24):sideIcon(k,c,24);
-        ((UILabel*)[b viewWithTag:98]).textColor=c;
-        b.backgroundColor=on?[UIColor colorWithWhite:1 alpha:0.06]:[UIColor clearColor];
+        NSString*k=b.accessibilityLabel; BOOL on=[k isEqualToString:key];
+        ((UIImageView*)[b viewWithTag:99]).image=[self iconFor:k on:on];
+        [self styleLabel:(UILabel*)[b viewWithTag:98] on:on];
+        if([SpotTheme ios6]){ b.backgroundColor=[UIColor clearColor]; [b setBackgroundImage:on?[SpotTheme sourceSelectionImage:b.bounds.size]:nil forState:UIControlStateNormal]; }
+        else b.backgroundColor=on?[UIColor colorWithWhite:1 alpha:0.06]:[UIColor clearColor];
     }
     [_table reloadData];
 }
@@ -174,14 +199,17 @@ static UIImage* sideIcon(NSString*name, UIColor*c, CGFloat s){
     iv.image=nil; iv.accessibilityLabel=nil;
     BOOL foot=[key isEqualToString:@"coverflow"]||[key isEqualToString:@"settings"];
     iv.backgroundColor=foot?[UIColor clearColor]:[SpotTheme card]; iv.contentMode=foot?UIViewContentModeCenter:UIViewContentModeScaleAspectFill;
-    if(foot){ l.text=[key isEqualToString:@"settings"]?L(@"Settings"):L(@"Cover Flow"); iv.image=sideIcon(key,on?[SpotTheme ink]:[SpotTheme muted],24); }
+    if(foot){ l.text=[key isEqualToString:@"settings"]?L(@"Settings"):L(@"Cover Flow"); iv.image=[self iconFor:key on:on]; }
     else if(ip.row==0){ l.text=L(@"Liked Songs"); [MMCovers likedCoverInto:iv]; }
     else { NSDictionary*p=_playlists[ip.row-1]; l.text=p[@"name"]; iv.accessibilityLabel=p[@"id"];
         if([p[@"cover"] length]) [MMCovers thumb:p[@"cover"] size:36 radius:2 into:iv];
         else { NSString*pid=p[@"id"]; __weak UIImageView*wiv=iv;   // kein eigenes Bild: Mosaik aus den ersten Songs (wie in der Bibliothek)
             [MMCovers playlistCover:pid completion:^(NSString*mu){ if(mu.length && [wiv.accessibilityLabel isEqualToString:pid]) [MMCovers thumb:mu size:36 radius:2 into:wiv]; }]; } }
-    l.textColor=on?[SpotTheme ink]:[SpotTheme muted];
-    c.contentView.backgroundColor=on?[UIColor colorWithWhite:1 alpha:0.06]:[UIColor clearColor];
+    [self styleLabel:l on:on];
+    if([SpotTheme ios6]){ c.contentView.backgroundColor=[UIColor clearColor];
+        UIImageView*bg=(UIImageView*)c.backgroundView; if(![bg isKindOfClass:[UIImageView class]]){ bg=[[UIImageView alloc] init]; c.backgroundView=bg; }
+        bg.image=on?[SpotTheme sourceSelectionImage:CGSizeMake(tv.bounds.size.width,PL_ROW_H)]:nil; }
+    else c.contentView.backgroundColor=on?[UIColor colorWithWhite:1 alpha:0.06]:[UIColor clearColor];
     return c;
 }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {

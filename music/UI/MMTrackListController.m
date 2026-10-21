@@ -67,8 +67,9 @@ static char kRowKey;   // Zeilennummer am Artist-Label (Album-Seite)
 
     _table=[[UITableView alloc] initWithFrame:CGRectMake(0,46,W,H-46) style:UITableViewStylePlain];
     _table.backgroundColor=[SpotTheme bg]; _table.separatorStyle=UITableViewCellSeparatorStyleNone;
-    _table.dataSource=self; _table.delegate=self; _table.rowHeight=MMTrackRowH; _table.contentInset=UIEdgeInsetsMake(0,0,MMPageBottomInset(90),0);
-    _table.autoresizingMask=UIViewAutoresizingFlexibleHeight|UIViewAutoresizingFlexibleWidth; [self.view addSubview:_table];
+    _table.dataSource=self; _table.delegate=self; _table.rowHeight=([SpotTheme ios6]&&_coverStyle)?52:MMTrackRowH; _table.contentInset=UIEdgeInsetsMake(0,0,MMPageBottomInset(90),0);   // iOS 6: Zeilen so hoch wie in der Warteschlange
+    _table.autoresizingMask=UIViewAutoresizingFlexibleHeight|UIViewAutoresizingFlexibleWidth; [SpotTheme skinTable:_table]; if([SpotTheme ios6]){ _table.backgroundColor=[SpotTheme shelfColor]; if(_coverStyle) _table.separatorStyle=UITableViewCellSeparatorStyleNone; }   // iOS 6: Grund wie die Startseite; Musik-App-Zeilen zeichnen ihre Linien selbst
+    [self.view addSubview:_table];
 
     if(_coverStyle) [self buildHeader];
     _hint=[[UILabel alloc] initWithFrame:CGRectMake(20,_coverStyle?190:110,W-40,40)]; _hint.textColor=[SpotTheme faint]; _hint.font=[SpotTheme sub]; _hint.textAlignment=NSTextAlignmentCenter; [self.view addSubview:_hint];
@@ -91,8 +92,8 @@ static char kRowKey;   // Zeilennummer am Artist-Label (Album-Seite)
     // kleines Cover links, Angaben rechts daneben -> die ersten Titel bleiben ohne Scrollen sichtbar
     CGFloat W=self.view.bounds.size.width, side=112, x=16+side+12, tw=W-x-12;
     UIView*h=[[UIView alloc] initWithFrame:CGRectMake(0,0,W,side+18)];
-    _hCover=[[UIImageView alloc] initWithFrame:CGRectMake(16,6,side,side)]; _hCover.backgroundColor=[SpotTheme card];
-    _hCover.contentMode=UIViewContentModeScaleAspectFill; _hCover.clipsToBounds=YES; [h addSubview:_hCover];
+    BOOL six=[SpotTheme ios6]; if(six) h.frame=CGRectMake(0,0,W,side+22);   // iOS 6: Platz für das Spiegelbild
+    _hCover=[SpotTheme shelfCover:CGRectMake(16,6,side,side) in:h reflection:six?13:0 fade:[UIColor colorWithWhite:0.90 alpha:1]]; _hCover.backgroundColor=[SpotTheme card];
     _hTitle=[[UILabel alloc] initWithFrame:CGRectMake(x,8,tw,44)]; _hTitle.font=[UIFont boldSystemFontOfSize:18]; _hTitle.textColor=[SpotTheme ink];
     _hTitle.numberOfLines=2; _hTitle.backgroundColor=[UIColor clearColor]; [h addSubview:_hTitle];
     _hSub=[[UILabel alloc] initWithFrame:CGRectMake(x,54,tw,32)]; _hSub.font=[UIFont boldSystemFontOfSize:12]; _hSub.textColor=[SpotTheme ink];
@@ -100,6 +101,12 @@ static char kRowKey;   // Zeilennummer am Artist-Label (Album-Seite)
     if([_path hasPrefix:@"albums/"]){ _hSub.userInteractionEnabled=YES; [_hSub addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(headerArtistTap)]]; }
     _hInfo=[[UILabel alloc] initWithFrame:CGRectMake(x,86,tw,32)]; _hInfo.font=[UIFont systemFontOfSize:11]; _hInfo.textColor=[SpotTheme muted];
     _hInfo.numberOfLines=2; _hInfo.backgroundColor=[UIColor clearColor]; [h addSubview:_hInfo];
+    if(six){   // wie ein Album in der Musik-App: grauer Verlauf, Cover mit Spiegelbild, dunkelgraue Schrift mit weißem Schatten, Linie zur ersten Zeile
+        [SpotTheme albumHeadBackground:h];
+        _hTitle.textColor=[SpotTheme ink]; _hSub.textColor=[SpotTheme ink]; _hInfo.textColor=[SpotTheme muted];
+        _hTitle.font=[UIFont boldSystemFontOfSize:16]; _hSub.font=[UIFont boldSystemFontOfSize:11]; _hInfo.font=[UIFont boldSystemFontOfSize:10];   // kleiner, wie die Musik-App
+        for(UILabel*l in @[_hTitle,_hSub,_hInfo]){ [SpotTheme engrave:l]; l.shadowColor=[UIColor colorWithWhite:1 alpha:0.45]; }   // schwacher Schatten: auf dem dunklen Verlaufsanfang wirkte der volle wie ein Schein
+    }
     MMAutoMask(h);
     _table.tableHeaderView=h;
     [self updateHeader];
@@ -157,7 +164,7 @@ static NSString* fmtDuration(long long ms){
         CGFloat lh=l.font.lineHeight, h=[l.text sizeWithFont:l.font constrainedToSize:CGSizeMake(tw,lh*lines+1) lineBreakMode:NSLineBreakByTruncatingTail].height;
         return MIN(ceil(h),ceil(lh*lines)); };
     CGFloat ht=fit(_hTitle,2), hs=fit(_hSub,2), hi=fit(_hInfo,2);
-    CGFloat total=ht+(hs?g1+hs:0)+(hi?(hs?g2:g1)+hi:0), y=y0+MAX(0,(side-total)/2);
+    CGFloat total=ht+(hs?g1+hs:0)+(hi?(hs?g2:g1)+hi:0), y=y0+floor(MAX(0,(side-total)/2));   // ganze Punkte: halbe ließen die Schrift verschwommen aussehen (Playlists)
     _hTitle.frame=CGRectMake(x,y,tw,ht); y+=ht+g1;
     if(hs){ _hSub.frame=CGRectMake(x,y,tw,hs); y+=hs+g2; }
     if(hi) _hInfo.frame=CGRectMake(x,y,tw,hi);
@@ -264,7 +271,7 @@ static NSString* fmtDuration(long long ms){
 }
 // Zufallswiedergabe: zwei gekreuzte Pfeile (wie im Player), grün
 static UIImage* shuffleIcon(void){
-    CGFloat B=26, sz=20, o=3; UIGraphicsBeginImageContextWithOptions(CGSizeMake(B,B),NO,0); [[SpotTheme green] setStroke];
+    CGFloat B=26, sz=20, o=3; UIGraphicsBeginImageContextWithOptions(CGSizeMake(B,B),NO,0); [([SpotTheme ios6]?[SpotTheme headerInk]:[SpotTheme green]) setStroke];
     UIBezierPath*p=[UIBezierPath bezierPath]; p.lineWidth=2; p.lineCapStyle=kCGLineCapRound; p.lineJoinStyle=kCGLineJoinRound;
     #define P(x,y) CGPointMake(o+sz*(x),o+sz*(y))
     [p moveToPoint:P(0.05,0.25)]; [p addCurveToPoint:P(0.9,0.75) controlPoint1:P(0.5,0.25) controlPoint2:P(0.45,0.75)];
@@ -276,10 +283,18 @@ static UIImage* shuffleIcon(void){
 }
 // Knopf-Symbol: Kreis mit Pfeil nach unten (noch nicht offline) bzw. grüner Kreis mit Haken (offline)
 static UIImage* offIcon(BOOL have, UIColor*grn){
+    if([SpotTheme ios6]){   // iOS 6: kleiner (20), geladen = nur ein weißer Haken in derselben Größe
+        CGFloat S=20; UIGraphicsBeginImageContextWithOptions(CGSizeMake(S,S),NO,0); CGContextRef cx=UIGraphicsGetCurrentContext();
+        CGContextSetShadowWithColor(cx,CGSizeMake(0,-1),0,[UIColor colorWithWhite:0 alpha:0.4].CGColor); [[UIColor whiteColor] setStroke];
+        UIBezierPath*p=[UIBezierPath bezierPath]; p.lineCapStyle=kCGLineCapRound; p.lineJoinStyle=kCGLineJoinRound;
+        if(have){ p.lineWidth=2.6; [p moveToPoint:CGPointMake(3.5,10.5)]; [p addLineToPoint:CGPointMake(8,15)]; [p addLineToPoint:CGPointMake(16.5,5)]; [p stroke]; }
+        else { UIBezierPath*c=[UIBezierPath bezierPathWithOvalInRect:CGRectMake(1.5,1.5,17,17)]; c.lineWidth=1.5; [c stroke];
+            p.lineWidth=1.8; [p moveToPoint:CGPointMake(10,5.5)]; [p addLineToPoint:CGPointMake(10,14)]; [p moveToPoint:CGPointMake(6.5,10.5)]; [p addLineToPoint:CGPointMake(10,14)]; [p addLineToPoint:CGPointMake(13.5,10.5)]; [p stroke]; }
+        UIImage*img=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext(); return img; }
     if(have) return [SpotTheme downloadedIcon:26];   // gleiches Zeichen wie in den Zeilen
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(26,26),NO,0);
     UIBezierPath*p=[UIBezierPath bezierPath]; p.lineWidth=2; p.lineCapStyle=kCGLineCapRound; p.lineJoinStyle=kCGLineJoinRound;
-    { [[SpotTheme ink] setStroke]; UIBezierPath*c=[UIBezierPath bezierPathWithOvalInRect:CGRectMake(2,2,22,22)]; c.lineWidth=1.5; [c stroke];
+    { [[SpotTheme headerInk] setStroke]; UIBezierPath*c=[UIBezierPath bezierPathWithOvalInRect:CGRectMake(2,2,22,22)]; c.lineWidth=1.5; [c stroke];
         [p moveToPoint:CGPointMake(13,7.5)]; [p addLineToPoint:CGPointMake(13,18)]; [p moveToPoint:CGPointMake(8.5,13.5)]; [p addLineToPoint:CGPointMake(13,18)]; [p addLineToPoint:CGPointMake(17.5,13.5)]; [p stroke]; }
     UIImage*img=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext(); return img;
 }
@@ -353,25 +368,35 @@ enum { kAlertRemove=1, kAlertSave=2 };
 // Zeilen: 56 pt hoch. iPad: rechts Spalten für Album (nicht auf Album-Seiten, da überall gleich) und Dauer.
 // Album-Seiten: Antippen des Artist-Namens öffnet den Artist (der Rest der Zeile spielt wie bisher).
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
-    CGFloat W=tv.bounds.size.width, RH=MMTrackRowH;
+    CGFloat W=tv.bounds.size.width, RH=tv.rowHeight;
     BOOL albumPage=[_path hasPrefix:@"albums/"], cols=MMIsPad(), albumCol=cols && !albumPage;
     CGFloat timeX=W-32-8-48, albumX=floor(W*0.55), textR=cols?(albumCol?albumX-12:timeX-12):W-40;
     UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:MMCellID(@"r",tv)];
     if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:MMCellID(@"r",tv)];
         c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
         // Cover-Ansicht: Nummer vorn; Alben ohne Cover (alle gleich), Playlists mit kleinem Cover zwischen Nummer und Titel
-        BOOL num=_coverStyle, cover=!_coverStyle || !albumPage;
-        CGFloat tx=num?(cover?84:40):70;
-        if(num){ UILabel*no=[[UILabel alloc] initWithFrame:CGRectMake(4,0,30,RH)]; no.tag=5; no.font=[UIFont systemFontOfSize:15]; no.textColor=[SpotTheme muted];
+        BOOL num=_coverStyle, cover=!_coverStyle || !albumPage, six=num && [SpotTheme ios6];
+        CGFloat tx=num?(cover?84:40):70; if(six) tx=cover?96:52;
+        if(six){   // iOS 6 wie die Musik-App: Zeilen abwechselnd hell/dunkler, Nummernspalte mit eingeprägter senkrechter Linie
+            UIView*bgv=[[UIView alloc] initWithFrame:CGRectMake(0,0,W,RH)]; bgv.tag=60;
+            CGFloat lines[][3]={{0,0,1.0},{RH-1,0,0.776}};   // oben weiß, unten grau
+            for(int k=0;k<2;k++){ UIView*l=[[UIView alloc] initWithFrame:CGRectMake(0,lines[k][0],W,1)]; l.backgroundColor=[UIColor colorWithWhite:lines[k][2] alpha:1]; l.autoresizingMask=UIViewAutoresizingFlexibleWidth; [bgv addSubview:l]; }
+            for(int k=0;k<2;k++){ UIView*l=[[UIView alloc] initWithFrame:CGRectMake(42+k,0,1,RH)]; l.backgroundColor=[UIColor colorWithWhite:k?0.96:0.74 alpha:1]; [bgv addSubview:l]; }
+            c.backgroundView=bgv; }
+        if(num){ UILabel*no=[[UILabel alloc] initWithFrame:six?CGRectMake(0,0,42,RH):CGRectMake(4,0,30,RH)]; no.tag=5; no.font=six?[UIFont boldSystemFontOfSize:14]:[UIFont systemFontOfSize:15]; no.textColor=six?[SpotTheme ink]:[SpotTheme muted];
             no.textAlignment=NSTextAlignmentCenter; no.adjustsFontSizeToFitWidth=YES; [c.contentView addSubview:no]; }
-        if(cover){ UIImageView*cov=[[UIImageView alloc] initWithFrame:num?CGRectMake(36,8,40,40):CGRectMake(16,6,44,44)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.layer.cornerRadius=4; cov.clipsToBounds=YES; cov.contentMode=UIViewContentModeScaleAspectFill; [c.contentView addSubview:cov]; }
+        if(cover){ UIImageView*cov=[[UIImageView alloc] initWithFrame:six?CGRectMake(50,(RH-40)/2,40,40):num?CGRectMake(36,8,40,40):CGRectMake(16,6,44,44)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.layer.cornerRadius=4; cov.clipsToBounds=YES; cov.contentMode=UIViewContentModeScaleAspectFill; [c.contentView addSubview:cov]; }
         UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(tx,9,textR-tx,20)]; ti.tag=2; ti.font=[UIFont boldSystemFontOfSize:15]; ti.textColor=[SpotTheme ink]; [c.contentView addSubview:ti];
         UILabel*ar=[[UILabel alloc] initWithFrame:CGRectMake(tx,29,textR-tx,18)]; ar.tag=3; ar.font=[SpotTheme sub]; ar.textColor=[SpotTheme muted]; [c.contentView addSubview:ar];
+        if(six){ ti.textColor=[SpotTheme ink]; ar.textColor=[SpotTheme muted];
+            ti.font=[UIFont boldSystemFontOfSize:14]; ar.font=[UIFont systemFontOfSize:12]; ti.frame=CGRectMake(tx,8,textR-tx,19); ar.frame=CGRectMake(tx,26,textR-tx,17);
+            for(UILabel*l in @[ti,ar,(UILabel*)[c.contentView viewWithTag:5]]){ [SpotTheme engrave:l]; l.shadowColor=[UIColor colorWithWhite:1 alpha:0.6]; } }
         if(albumPage){ ar.userInteractionEnabled=YES; [ar addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(rowArtistTap:)]]; }
         if(albumCol){ UILabel*al=[[UILabel alloc] initWithFrame:CGRectMake(albumX,0,timeX-12-albumX,RH)]; al.tag=6; al.font=[SpotTheme sub]; al.textColor=[SpotTheme muted]; [c.contentView addSubview:al]; }
         if(cols){ UILabel*tm=[[UILabel alloc] initWithFrame:CGRectMake(timeX,0,48,RH)]; tm.tag=7; tm.font=[SpotTheme sub]; tm.textColor=[SpotTheme muted]; tm.textAlignment=NSTextAlignmentRight; [c.contentView addSubview:tm]; }
         UIImageView*dl=[[UIImageView alloc] initWithFrame:CGRectMake(W-32,(RH-18)/2,18,18)]; dl.tag=4; dl.contentMode=UIViewContentModeCenter; dl.autoresizingMask=UIViewAutoresizingFlexibleLeftMargin; [c.contentView addSubview:dl]; }
     NSDictionary*t=_tracks[ip.row];
+    if(c.backgroundView.tag==60) c.backgroundView.backgroundColor=[UIColor colorWithWhite:(ip.row%2)?0.918:0.871 alpha:1];   // abwechselnd wie die Musik-App
     ((UILabel*)[c.contentView viewWithTag:2]).text=t[@"title"];
     UILabel*ar=(UILabel*)[c.contentView viewWithTag:3]; ar.text=t[@"artist"]; objc_setAssociatedObject(ar,&kRowKey,@(ip.row),OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if(albumPage){ CGRect f=ar.frame; f.size.width=MIN([t[@"artist"] sizeWithFont:ar.font].width+8,textR-f.origin.x); ar.frame=f; }   // nur der Name ist antippbar, der Rest der Zeile spielt
@@ -405,10 +430,10 @@ enum { kAlertRemove=1, kAlertSave=2 };
     return p;
 }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];   // Auswahl nicht stehen lassen (sonst bleibt die Schrift weiß)
     NSDictionary*t=_tracks[ip.row]; NSArray*list=[self playableTracks]; NSUInteger i=[list indexOfObject:t];
     if(i==NSNotFound) return;   // offline und nicht gespeichert: grau, spielt nicht
     [[MMRootController shared] playList:list index:(NSInteger)i context:[self context]];
-    if(!MMIsPad()) [[MMRootController shared] openPlayer];   // iPad: nur abspielen, die Leiste unten zeigt den Titel   // Player als Vollbild; Titelliste bleibt darunter im Inhaltsbereich
 }
 // Herkunft für den Verlauf: Lieblingssongs, Playlist oder Album (Cover = Albumcover des ersten Titels)
 - (NSDictionary *)context {

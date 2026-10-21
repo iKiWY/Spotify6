@@ -24,11 +24,11 @@
 
 static MMRootController *gRoot;
 
-@interface MMRootController () <AVAudioSessionDelegate>   // iOS 5: Unterbrechungen kommen über den Session-Delegate
+@interface MMRootController () <AVAudioSessionDelegate, UITabBarDelegate>   // iOS 5: Unterbrechungen kommen über den Session-Delegate
 @end
 
 @implementation MMRootController {
-    UIView *_content, *_tabBar, *_npBar, *_npCover;
+    UIView *_content, *_tabBar, *_npBar, *_npCover; UITabBar *_sysTabBar;
     UILabel *_npTitle, *_npArtist;
     UIButton *_npPlay;
     UIActivityIndicatorView *_npSpinner;
@@ -154,6 +154,36 @@ MM_IOS6_END
 
 // Abmelden: alles vom Konto löschen und Spotify6 beenden. Beenden ist Absicht: so bleibt garantiert nichts vom alten
 // Konto im Speicher (Cover, Listen, Warteschlange); beim nächsten Öffnen kommt die Anmeldung.
+// Skin wechseln: Zustand sichern, alte Oberfläche abmelden (keine doppelten Reaktionen auf Benachrichtigungen),
+// neue aufbauen und überblenden; danach wieder in den Einstellungen. Ein Beenden der App hinterließ beim schnellen Wiederöffnen einen schwarzen Bildschirm.
++ (void)switchSkin:(NSString *)skin {
+    MMRootController*old=gRoot; UIWindow*w=old.view.window; if(!old || !w) return;
+    // kleines Fenster mit Kreisel, bis die neue Oberfläche steht (nur Kreisel: das Fenster dreht sich auf dem iPad nicht mit)
+    UIView*hud=[[UIView alloc] initWithFrame:CGRectMake(0,0,90,90)]; hud.center=CGPointMake(CGRectGetMidX(w.bounds),CGRectGetMidY(w.bounds));
+    hud.autoresizingMask=UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleRightMargin|UIViewAutoresizingFlexibleTopMargin|UIViewAutoresizingFlexibleBottomMargin;
+    hud.backgroundColor=[UIColor colorWithWhite:0 alpha:0.75]; hud.layer.cornerRadius=12;
+    UIActivityIndicatorView*sp=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhiteLarge];
+    sp.center=CGPointMake(45,45); [sp startAnimating]; [hud addSubview:sp];
+    hud.alpha=0; [w addSubview:hud]; [UIView animateWithDuration:0.15 animations:^{ hud.alpha=1; }];
+    // erst im nächsten Durchlauf umbauen, damit das Fenster vorher zu sehen ist (der Umbau hält den Hauptthread kurz an; der Kreisel dreht weiter)
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.2*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
+        [old saveState];
+        [SpotTheme setSkin:skin]; [SpotTheme applySkin];
+        [old retire];
+        MMRootController*n=[[MMRootController alloc] init];   // setzt gRoot
+        [UIView transitionWithView:w duration:0.35 options:UIViewAnimationOptionTransitionCrossDissolve|UIViewAnimationOptionAllowAnimatedContent
+                        animations:^{ w.rootViewController=n; [w bringSubviewToFront:hud]; }
+                        completion:^(BOOL f){ [w bringSubviewToFront:hud];
+                            [UIView animateWithDuration:0.25 delay:0.25 options:0 animations:^{ hud.alpha=0; } completion:^(BOOL g){ [hud removeFromSuperview]; }]; }];
+        if(!MMIsPad()) [n selectTab:3];   // zurück in die Einstellungen (iPhone: über die Bibliothek)
+        [n pushContent:[[NSClassFromString(@"MMSettingsController") alloc] init]];
+    });
+}
+- (void)retire {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    MM_IOS6_BEGIN if([AVAudioSession sharedInstance].delegate==(id)self) [AVAudioSession sharedInstance].delegate=nil; MM_IOS6_END   // iOS 5: Unterbrechungen gehen an die neue Oberfläche
+}
+- (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
 + (void)confirmLogout {
     [MMSheet showIn:gRoot.view title:L(@"Log out?") subtitle:L(@"Removes your Spotify login, all downloads, playlists and settings from this iPhone. Spotify6 closes afterwards.")
             options:@[L(@"Log out and delete data")] done:^(NSInteger i){
@@ -221,15 +251,15 @@ MM_IOS6_END
     if(!MMIsPad()){   // iPhone: Now-Playing-Leiste (iPad: Player-Leiste, siehe buildPadShell)
     // Now-Playing-Leiste
     _npBar=[[UIView alloc] initWithFrame:CGRectMake(0,H-tabH-npH,W,npH)];
-    _npBar.backgroundColor=[UIColor colorWithRed:0.14 green:0.14 blue:0.16 alpha:1];
+    _npBar.backgroundColor=[SpotTheme ios6]?[UIColor colorWithPatternImage:[SpotTheme toolbarImage:npH]]:[UIColor colorWithRed:0.14 green:0.14 blue:0.16 alpha:1];
     UIView*npl=[[UIView alloc] initWithFrame:CGRectMake(0,0,W,0.5f)]; npl.backgroundColor=[SpotTheme bg]; [_npBar addSubview:npl];
     _npCover=[[UIView alloc] initWithFrame:CGRectMake(8,8,36,36)]; _npCover.backgroundColor=[SpotTheme card]; _npCover.layer.cornerRadius=3; _npCover.clipsToBounds=YES; [_npBar addSubview:_npCover];
-    _npTitle=[[UILabel alloc] initWithFrame:CGRectMake(54,9,W-54-90,18)]; _npTitle.font=[UIFont boldSystemFontOfSize:13]; _npTitle.textColor=[SpotTheme ink]; [_npBar addSubview:_npTitle];
-    _npArtist=[[UILabel alloc] initWithFrame:CGRectMake(54,27,W-54-90,16)]; _npArtist.font=[SpotTheme sub]; _npArtist.textColor=[SpotTheme muted]; [_npBar addSubview:_npArtist];
+    _npTitle=[[UILabel alloc] initWithFrame:CGRectMake(54,9,W-54-90,18)]; _npTitle.font=[UIFont boldSystemFontOfSize:13]; _npTitle.textColor=[SpotTheme chromeInk]; _npTitle.backgroundColor=[UIColor clearColor]; [_npBar addSubview:_npTitle];
+    _npArtist=[[UILabel alloc] initWithFrame:CGRectMake(54,27,W-54-90,16)]; _npArtist.font=[SpotTheme sub]; _npArtist.textColor=[SpotTheme ios6]?[UIColor colorWithWhite:0.7 alpha:1]:[SpotTheme muted]; _npArtist.backgroundColor=[UIColor clearColor]; [_npBar addSubview:_npArtist];
     UIButton*npTap=[UIButton buttonWithType:UIButtonTypeCustom]; npTap.frame=_npBar.bounds; [npTap addTarget:self action:@selector(openPlayer) forControlEvents:UIControlEventTouchUpInside]; [_npBar addSubview:npTap];
     // Warteschlange links neben Play/Pause (öffnet dieselbe Ansicht wie im Player)
     UIButton*npQ=[UIButton buttonWithType:UIButtonTypeCustom]; npQ.frame=CGRectMake(W-84,8,36,36);
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(20,16),NO,0); [[SpotTheme ink] setFill];
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(20,16),NO,0); [[SpotTheme chromeInk] setFill];
     for(int i=0;i<3;i++){ UIRectFill(CGRectMake(5,1+i*6,15,2)); UIRectFill(CGRectMake(0,1+i*6,2,2)); }
     [npQ setImage:UIGraphicsGetImageFromCurrentImageContext() forState:UIControlStateNormal]; UIGraphicsEndImageContext();
     [npQ addTarget:self action:@selector(openQueue) forControlEvents:UIControlEventTouchUpInside]; [_npBar addSubview:npQ];
@@ -249,22 +279,37 @@ MM_IOS6_END
     }
     // globale Offline-Download-Leiste - immer sichtbar wenn aktiv, direkt über der Now-Playing-Leiste
     _dlBar=[[UIView alloc] initWithFrame:CGRectMake(0,H-tabH-npH-24,W,24)];
-    _dlBar.backgroundColor=[UIColor colorWithRed:0.10 green:0.10 blue:0.11 alpha:1];
-    _dlLbl=[[UILabel alloc] initWithFrame:CGRectMake(12,0,W-24,22)]; _dlLbl.font=[UIFont boldSystemFontOfSize:11]; _dlLbl.textColor=[SpotTheme ink]; _dlLbl.textAlignment=NSTextAlignmentCenter; [_dlBar addSubview:_dlLbl];
+    _dlBar.backgroundColor=[SpotTheme ios6]?[UIColor colorWithPatternImage:[SpotTheme toolbarImage:24]]:[UIColor colorWithRed:0.10 green:0.10 blue:0.11 alpha:1];
+    _dlLbl=[[UILabel alloc] initWithFrame:CGRectMake(12,0,W-24,22)]; _dlLbl.font=[UIFont boldSystemFontOfSize:11]; _dlLbl.textColor=[SpotTheme chromeInk]; _dlLbl.textAlignment=NSTextAlignmentCenter; [_dlBar addSubview:_dlLbl];
     _dlProg=[[UIView alloc] initWithFrame:CGRectMake(0,22,0,2)]; _dlProg.backgroundColor=[SpotTheme green]; [_dlBar addSubview:_dlProg];
     _dlBar.hidden=YES; [self.view addSubview:_dlBar];
 
     if(!MMIsPad()){
     // Tab-Leiste
     _tabBar=[[UIView alloc] initWithFrame:CGRectMake(0,H-tabH,W,tabH)];
-    _tabBar.backgroundColor=[SpotTheme bar];
-    UIView*tl=[[UIView alloc] initWithFrame:CGRectMake(0,0,W,0.5f)]; tl.backgroundColor=[SpotTheme line]; [_tabBar addSubview:tl];
+    _tabBar.backgroundColor=[SpotTheme ios6]?[UIColor colorWithPatternImage:[SpotTheme toolbarImage:tabH]]:[SpotTheme bar];
+    UIView*tl=[[UIView alloc] initWithFrame:CGRectMake(0,0,W,0.5f)]; tl.backgroundColor=[SpotTheme ios6]?[UIColor blackColor]:[SpotTheme line]; [_tabBar addSubview:tl];
     _tabBtns=[NSMutableArray array]; NSUInteger nTabs=_tabs.count; CGFloat tw=W/nTabs;
+    if([SpotTheme ios6]){   // iOS 6: echte Tab-Leiste in der Farbe der Kopfleiste (wie WhatsApp6), gefüllte Symbole
+        _sysTabBar=[[UITabBar alloc] initWithFrame:_tabBar.bounds]; _sysTabBar.autoresizingMask=UIViewAutoresizingFlexibleWidth;
+        _sysTabBar.backgroundImage=[SpotTheme tabBarImage:_tabBar.bounds.size]; _sysTabBar.selectionIndicatorImage=[SpotTheme tabSelectionImage:CGSizeMake(floor(W/nTabs)-4,tabH)];
+        _sysTabBar.delegate=self;
+        NSMutableArray*items=[NSMutableArray array];
+        NSDictionary*(^txt)(UIColor*)=^NSDictionary*(UIColor*c){ return @{UITextAttributeTextColor:c,UITextAttributeTextShadowColor:[UIColor colorWithWhite:0 alpha:0.45],
+            UITextAttributeTextShadowOffset:[NSValue valueWithUIOffset:UIOffsetMake(0,-1)],UITextAttributeFont:[UIFont boldSystemFontOfSize:10]}; };
+        for(NSUInteger i=0;i<nTabs;i++){ UITabBarItem*it=[[UITabBarItem alloc] initWithTitle:titles[i] image:nil tag:i];   // eigene Farben statt der Systemtönung
+            [it setFinishedSelectedImage:[SpotTheme tabGlyph:_tabs[i] selected:YES] withFinishedUnselectedImage:[SpotTheme tabGlyph:_tabs[i] selected:NO]];
+            [it setTitleTextAttributes:txt([UIColor colorWithRed:0.82 green:0.89 blue:0.84 alpha:1]) forState:UIControlStateNormal];
+            [it setTitleTextAttributes:txt([UIColor whiteColor]) forState:UIControlStateSelected];
+            [items addObject:it]; }
+        _sysTabBar.items=items; [_tabBar addSubview:_sysTabBar]; nTabs=0;   // keine eigenen Knöpfe
+    }
     for(NSUInteger i=0;i<nTabs;i++){
         UIButton*b=[UIButton buttonWithType:UIButtonTypeCustom]; b.frame=CGRectMake(i*tw,0,tw,tabH); b.tag=i;
         [b addTarget:self action:@selector(tapTab:) forControlEvents:UIControlEventTouchUpInside];
+        if([SpotTheme ios6]){ UIImageView*hl=[[UIImageView alloc] initWithFrame:CGRectInset(b.bounds,2,2)]; hl.image=[SpotTheme tabHighlightImage]; hl.tag=97; hl.hidden=YES; [b addSubview:hl]; }   // iOS 6: graue Fläche hinter dem gewählten Tab
         UIImageView*iv=[[UIImageView alloc] initWithFrame:CGRectMake((tw-24)/2,8,24,24)]; iv.tag=99; [b addSubview:iv];
-        UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(0,33,tw,12)]; l.text=titles[i]; l.font=[SpotTheme tab]; l.textAlignment=NSTextAlignmentCenter; l.tag=98; [b addSubview:l];
+        UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(0,33,tw,12)]; l.text=titles[i]; l.font=[SpotTheme ios6]?[UIFont boldSystemFontOfSize:10]:[SpotTheme tab]; l.textAlignment=NSTextAlignmentCenter; l.backgroundColor=[UIColor clearColor]; l.tag=98; [b addSubview:l];
         [_tabBar addSubview:b]; [_tabBtns addObject:b];
     }
     [self.view addSubview:_tabBar];
@@ -324,6 +369,7 @@ MM_IOS6_END
     _curId=cid; _curTitle=[u stringForKey:@"spTitle"]; _curArtist=[u stringForKey:@"spArtist"]; _curCover=[u stringForKey:@"spCover"];
     if(!_curCover.length && _queue.count && _queueIdx>=0 && _queueIdx<(NSInteger)_queue.count) _curCover=_queue[_queueIdx][@"cover"];   // Fallback aus Queue
     _resumePos=[u doubleForKey:@"spPos"]; _needsResume=YES;
+    if([MMAudio duration]>0) _needsResume=NO;   // Skin-Wechsel: der Titel läuft noch (oder ist pausiert) -> Play/Pause gilt ihm, nicht dem Neuladen
     _npTitle.text=_curTitle; _npArtist.text=_curArtist; _npBar.hidden=NO; [self drawNpPlay];
     if(_curCover.length)[self loadNpCover:_curCover];
     NSString*rid=_curId;
@@ -341,13 +387,17 @@ MM_IOS6_END
 }
 
 - (void)tapTab:(UIButton *)b { [self selectTab:b.tag]; }
+- (void)tabBar:(UITabBar *)tb didSelectItem:(UITabBarItem *)it { [self selectTab:it.tag]; }
 - (void)selectTab:(NSInteger)idx {
     [self popContentImmediate];   // offene Playlist schließen beim Tab-Wechsel
     [[_vcs[_sel] view] removeFromSuperview];
     _sel=idx;
-    UIViewController*vc=_vcs[idx]; [self fitPage:vc]; [_content addSubview:vc.view]; [self tabShown];
+    UIViewController*vc=_vcs[idx]; [self fitPage:vc]; [_content addSubview:vc.view]; [SpotTheme skinPage:vc.view]; [self tabShown];
     [_sidebar setSelectedKey:_tabs[idx]];
-    for(NSUInteger i=0;i<_tabBtns.count;i++){ UIButton*b=_tabBtns[i]; UIColor*c=((NSInteger)i==idx)?[SpotTheme ink]:[SpotTheme faint];
+    if(_sysTabBar) _sysTabBar.selectedItem=_sysTabBar.items[idx];
+    for(NSUInteger i=0;i<_tabBtns.count;i++){ UIButton*b=_tabBtns[i];
+        BOOL on=((NSInteger)i==idx); [b viewWithTag:97].hidden=!on;
+        UIColor*c=[SpotTheme ios6]?(on?[UIColor colorWithRed:0.40 green:0.86 blue:0.47 alpha:1]:[UIColor colorWithWhite:0.55 alpha:1]):(on?[SpotTheme ink]:[SpotTheme faint]);
         ((UIImageView*)[b viewWithTag:99]).image=MMTabIcon(_tabs[i],c,24);
         ((UILabel*)[b viewWithTag:98]).textColor=c; }
 }
@@ -423,7 +473,7 @@ MM_IOS6_END
     else [self pushContent:vc];
 }
 - (void)pushContent:(UIViewController *)vc {
-    [_pushedStack addObject:vc]; vc.view.frame=_content.bounds; vc.view.clipsToBounds=YES; [_content addSubview:vc.view];
+    [_pushedStack addObject:vc]; vc.view.frame=_content.bounds; vc.view.clipsToBounds=YES; [_content addSubview:vc.view]; [SpotTheme skinPage:vc.view];
     CGRect f=vc.view.frame; vc.view.frame=CGRectOffset(f,f.size.width,0);
     [UIView animateWithDuration:0.3 animations:^{ vc.view.frame=f; }];   // von rechts reinschieben wie bei iOS
     // untere Leisten immer oben halten, damit sie nie von der Playlist verdeckt werden
@@ -695,7 +745,7 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
 }
 - (void)drawNpPlay {
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(20,20),NO,0);
-    [[SpotTheme ink] setFill];
+    [[SpotTheme chromeInk] setFill];
     if([MMAudio isPlaying]){ // Pause
         [[UIBezierPath bezierPathWithRect:CGRectMake(5,4,3.5,12)] fill];
         [[UIBezierPath bezierPathWithRect:CGRectMake(11.5,4,3.5,12)] fill];

@@ -1,3 +1,4 @@
+#import <mach-o/dyld.h>
 #import "MMDiagnosticsController.h"
 #import "SpotTheme.h"
 #import "MMLayout.h"
@@ -5,6 +6,17 @@
 #import "MMRootController.h"
 #import "MMTrackListController.h"
 #import "MeshL10n.h"
+
+// Jailbreak-Tweaks, die MobileSubstrate in diese App geladen hat (nur die können ihr Netz oder ihre Anzeige beeinflussen)
+static NSString* loadedTweaks(void) {
+    NSMutableArray*names=[NSMutableArray array];
+    for(uint32_t i=0;i<_dyld_image_count();i++){ const char*p=_dyld_get_image_name(i); if(!p) continue;
+        NSString*path=[NSString stringWithUTF8String:p];
+        if([path rangeOfString:@"/MobileSubstrate/DynamicLibraries/"].location==NSNotFound) continue;
+        [names addObject:[[path lastPathComponent] stringByDeletingPathExtension]]; }
+    [names sortUsingSelector:@selector(caseInsensitiveCompare:)];
+    return names.count?[names componentsJoinedByString:@", "]:@"none";
+}
 
 @implementation MMDiagnosticsController {
     UITextView *_text;
@@ -30,12 +42,15 @@
     _testBtn.backgroundColor=[SpotTheme ink]; _testBtn.titleLabel.font=[UIFont boldSystemFontOfSize:14];
     [_testBtn setTitle:L(@"Run connection test") forState:UIControlStateNormal]; [_testBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
     [_testBtn addTarget:self action:@selector(runTest) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:_testBtn];
+    if([SpotTheme ios6]){ _testBtn.backgroundColor=[UIColor clearColor]; [_testBtn setBackgroundImage:[SpotTheme glossyImage:[SpotTheme green] radius:10] forState:UIControlStateNormal];   // grüner Glanzknopf
+        [_testBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal]; [_testBtn setTitleShadowColor:[UIColor colorWithWhite:0 alpha:0.4] forState:UIControlStateNormal]; _testBtn.titleLabel.shadowOffset=CGSizeMake(0,-1); }
 
     _text=[[UITextView alloc] initWithFrame:CGRectMake(0,94,W,H-94)];
     _text.editable=NO; _text.backgroundColor=[SpotTheme bg]; _text.textColor=[SpotTheme ink];
     _text.font=[UIFont fontWithName:@"Courier" size:10]; _text.contentInset=UIEdgeInsetsMake(0,0,MMPageBottomInset(90),0);
     _text.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_text];
     _text.text=[self report];
+    [SpotTheme skinPage:self.view];   // auch vom Anmeldebildschirm aus (ohne App-Oberfläche)
     MMAutoMask(self.view);   // iPad: Unteransichten folgen der Breite beim Drehen
 }
 - (NSString *)report {
@@ -48,6 +63,7 @@
     [r appendFormat:@"Account: %@ · Country: %@\n",[MMSpotify productType]?:@"unknown",[MMSpotify country]?:@"?"];
     [r appendFormat:@"Song keys: %@\n",[MMSpotify keyStatus]];
     [r appendFormat:@"Network: %@ · Free: %@\n",[MMSpotify networkReachable]?@"online":@"offline",[MMTrackListController fmtBytes:[MMSpotify freeDiskBytes]]];
+    [r appendFormat:@"Tweaks in the app: %@\n",loadedTweaks()];
     [r appendFormat:@"Time: %@\n\n",[df stringFromDate:[NSDate date]]];
     if(_test){ [r appendString:@"--- Connection test ---\n"]; [r appendString:[_test componentsJoinedByString:@"\n"]]; [r appendString:@"\n\n--- Log ---\n"]; }
     NSString*log=[MMSpotify diagnosticLog];

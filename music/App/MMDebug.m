@@ -22,6 +22,7 @@
 #import "MMSpotify.h"
 #import "MMAudio.h"
 #import "MMRootController.h"
+#import "SpotTheme.h"
 #import "MMTrackListController.h"
 #import "MMArtistController.h"
 #import "MMSongMenu.h"
@@ -248,7 +249,13 @@ static void run(NSString*line){
     else if([c isEqualToString:@"dlmsg"]){   // dlmsg: Abschlussmeldung mit einem nicht lieferbaren Titel zeigen, 1 s später shot
         [[NSNotificationCenter defaultCenter] postNotificationName:@"MMDownloadDone" object:nil userInfo:@{@"ok":@135,@"unavailable":@1}];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(1*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ shot(); }); }
+    else if([c isEqualToString:@"skin"]) [MMRootController switchSkin:rest];   // skin ios6|spotify: wie die Auswahl in den Einstellungen
     else if([c isEqualToString:@"cpusample"]) cpuSample(w.count>1?[w[1] doubleValue]:10);
+    else if([c isEqualToString:@"tabbar"]){   // tabbar <0-4>: Farbvorschlag für die Tab-Leiste (iOS 6) zeigen
+        [SpotTheme setTabVariant:[rest intValue]]; UITabBar*tb=[root valueForKey:@"_sysTabBar"]; tb.backgroundImage=[SpotTheme tabBarImage:tb.bounds.size]; }
+    else if([c isEqualToString:@"hl"]){   // hl <zeile>: Zeile der Liste oben gedrückt zeigen (wie ein Finger darauf), zum Ansehen des Antipp-Looks
+        UIViewController*vc=[[root valueForKey:@"_pushedStack"] lastObject]?:[root valueForKey:@"_vcs"][[[root valueForKey:@"_sel"] integerValue]];
+        UITableView*tv=[vc valueForKey:@"_table"]; [[tv cellForRowAtIndexPath:[NSIndexPath indexPathForRow:[rest integerValue] inSection:0]] setHighlighted:YES animated:NO]; }
     else if([c isEqualToString:@"scroll"]){   // scroll <y>: Liste im aktuellen Tab bzw. der obersten geöffneten Ansicht
         UIViewController*vc=[[root valueForKey:@"_pushedStack"] lastObject]?:[root valueForKey:@"_vcs"][[[root valueForKey:@"_sel"] integerValue]];
         UIScrollView*sv=[vc valueForKey:class_getInstanceVariable([vc class],"_table")?@"_table":@"_sc"];   // Startseite hat keine Tabelle

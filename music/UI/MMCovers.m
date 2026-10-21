@@ -87,6 +87,20 @@ static void dedupeExisting(void){
 + (UIImage *)cached:(NSString *)url { return url.length?[gRam() objectForKey:url]:nil; }
 + (BOOL)onDisk:(NSString *)url { return url.length && [[NSFileManager defaultManager] fileExistsAtPath:diskPath(url)]; }
 
+// Cover aus dem Netz: erst über iOS (schnell, mit Sitzungen); lehnt iOS den Host ab (iOS 7 kennt die Zertifikate von Spotifys
+// Bild-CDN nicht: SSL-Fehler -9813), über das eigene TLS. Ein Host, bei dem iOS scheitert, geht danach gleich über das eigene TLS.
+static NSData* fetchCover(NSString *url) {
+    static NSMutableSet*own; static dispatch_once_t o; dispatch_once(&o,^{ own=[NSMutableSet set]; });
+    NSURL*u=[NSURL URLWithString:url]; if(!u) return nil;
+    BOOL viaOwn; @synchronized(own){ viaOwn=u.host && [own containsObject:u.host]; }
+    if(!viaOwn){ NSData*d=[NSData dataWithContentsOfURL:u];
+        if(d.length || ![u.scheme isEqualToString:@"https"] || ![MMSpotify networkReachable]) return d; }   // ohne Netz nicht nochmal versuchen
+    static dispatch_semaphore_t slots; static dispatch_once_t so; dispatch_once(&so,^{ slots=dispatch_semaphore_create(3); });   // höchstens 3 gleichzeitig (jede blockiert einen Thread)
+    dispatch_semaphore_wait(slots,DISPATCH_TIME_FOREVER); NSData*d=[MMSpotify httpsGet:u]; dispatch_semaphore_signal(slots);
+    if(d.length && !viaOwn){ @synchronized(own){ [own addObject:u.host]; } MMLog(@"covers: %@ via own TLS (iOS HTTPS refused)",u.host); }
+    return d;
+}
+
 static dispatch_queue_t gPre(void){ static dispatch_queue_t q; static dispatch_once_t o; dispatch_once(&o,^{ q=dispatch_queue_create("mesh.covers.prefetch",DISPATCH_QUEUE_SERIAL); }); return q; }
 + (void)prefetch:(NSString *)url {
     if(!url.length || [gRam() objectForKey:url]) return;
@@ -94,7 +108,7 @@ static dispatch_queue_t gPre(void){ static dispatch_queue_t q; static dispatch_o
         @autoreleasepool {
             NSString*dp=diskPath(url);
             if([[NSFileManager defaultManager] fileExistsAtPath:dp]) return;
-            NSData*d=[NSData dataWithContentsOfURL:[NSURL URLWithString:url]];
+            NSData*d=fetchCover(url);
             if(d.length && [UIImage imageWithData:d]) storeDeduped(d,dp);
         }
     });
@@ -111,7 +125,7 @@ static dispatch_queue_t gPre(void){ static dispatch_queue_t q; static dispatch_o
         NSData*d=[NSData dataWithContentsOfFile:dp];        // erst Platte
         if(d.length) img=[UIImage imageWithData:d];
         if(!img){                                           // dann Netz
-            d=[NSData dataWithContentsOfURL:[NSURL URLWithString:url]];
+            d=fetchCover(url);
             if(d.length){ img=[UIImage imageWithData:d]; if(img) storeDeduped(d,dp); }
         }
         if(img)[gRam() setObject:img forKey:url cost:imgCost(img)];
@@ -146,7 +160,7 @@ static NSCache *gThumbs(void){ static NSCache*c; static dispatch_once_t o; dispa
         if(!full){
             NSString*dp=diskPath(url); NSData*d=[NSData dataWithContentsOfFile:dp];
             if(d.length) full=[UIImage imageWithData:d];
-            if(!full){ d=[NSData dataWithContentsOfURL:[NSURL URLWithString:url]]; if(d.length){ full=[UIImage imageWithData:d]; if(full) storeDeduped(d,dp); } }
+            if(!full){ d=fetchCover(url); if(d.length){ full=[UIImage imageWithData:d]; if(full) storeDeduped(d,dp); } }
         }
         UIImage*th=nil;
         if(full.size.width>0 && full.size.height>0){

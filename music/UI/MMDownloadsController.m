@@ -34,7 +34,7 @@
     _table=[[UITableView alloc] initWithFrame:CGRectMake(0,46,W,H-46) style:UITableViewStylePlain];
     _table.backgroundColor=[SpotTheme bg]; _table.separatorColor=[SpotTheme line]; _table.rowHeight=60;
     _table.dataSource=self; _table.delegate=self; _table.contentInset=_table.scrollIndicatorInsets=UIEdgeInsetsMake(0,0,MMPageBottomInset(90),0);
-    _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_table];
+    _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [SpotTheme skinTable:_table]; if([SpotTheme ios6]) _table.allowsSelection=NO; [self.view addSubview:_table];   // Zeilen haben keine Tipp-Aktion
 
     _hint=[[UILabel alloc] initWithFrame:CGRectMake(20,140,W-40,40)]; _hint.text=L(@"No downloaded songs yet."); _hint.textColor=[SpotTheme faint];
     _hint.font=[SpotTheme sub]; _hint.textAlignment=NSTextAlignmentCenter; _hint.backgroundColor=[UIColor clearColor]; _hint.hidden=YES; [self.view addSubview:_hint];
@@ -96,8 +96,9 @@ static NSString* fmtEta(double s){
     if(s==0){ NSInteger q=[self queue].count; return q?1+MIN(q,(NSInteger)50):0; }   // Fortschrittszeile + die nächsten 50
     return _done.count;
 }
-- (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s { return [self tableView:tv numberOfRowsInSection:s]?36:0; }
+- (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s { return [self tableView:tv numberOfRowsInSection:s]?([SpotTheme ios6]?22:36):0; }
 - (UIView *)tableView:(UITableView *)tv viewForHeaderInSection:(NSInteger)s {
+    if([SpotTheme ios6]) return [SpotTheme plainSectionHeader:s==0?L(@"Downloading"):LF(@"Downloaded · %lu songs · %@",(unsigned long)_done.count,[MMTrackListController fmtBytes:_doneBytes]) width:tv.bounds.size.width];
     UIView*v=[[UIView alloc] initWithFrame:CGRectMake(0,0,tv.bounds.size.width,36)]; v.backgroundColor=[SpotTheme bg];
     UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(16,10,tv.bounds.size.width-32,22)]; l.backgroundColor=[UIColor clearColor];
     l.font=[UIFont boldSystemFontOfSize:17]; l.textColor=[SpotTheme ink];

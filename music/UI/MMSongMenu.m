@@ -30,9 +30,10 @@
     nav.textColor=[SpotTheme ink]; nav.textAlignment=NSTextAlignmentCenter; nav.adjustsFontSizeToFitWidth=YES; [self.view addSubview:nav];
     _table=[[UITableView alloc] initWithFrame:CGRectMake(0,46,W,H-46) style:UITableViewStylePlain];
     _table.backgroundColor=[SpotTheme bg]; _table.separatorColor=[SpotTheme line]; _table.rowHeight=60; _table.contentInset=UIEdgeInsetsMake(0,0,90,0);
-    _table.dataSource=self; _table.delegate=self; _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_table];
+    _table.dataSource=self; _table.delegate=self; _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [SpotTheme skinTable:_table]; [self.view addSubview:_table];
     _hint=[[UILabel alloc] initWithFrame:CGRectMake(20,110,W-40,40)]; _hint.textColor=[SpotTheme faint]; _hint.font=[SpotTheme sub]; _hint.textAlignment=NSTextAlignmentCenter; _hint.numberOfLines=2; _hint.hidden=YES; [self.view addSubview:_hint];
     _spin=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite]; _spin.center=CGPointMake(W/2,90); _spin.hidesWhenStopped=YES; [_spin startAnimating]; [self.view addSubview:_spin];
+    [SpotTheme skinPage:self.view];
     NSString*me=[MMSpotify username];
     [MMSpotify apiUserCached:@"me/playlists?limit=50" completion:^(NSDictionary*j,NSInteger st,BOOL fresh){
         [_spin stopAnimating];
@@ -60,6 +61,7 @@
     return c;
 }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [tv deselectRowAtIndexPath:ip animated:YES];   // Auswahl nicht stehen lassen (sonst bleibt die Schrift weiß)
     NSDictionary*p=_lists[ip.row]; MMRootController*root=[MMRootController shared];
     tv.userInteractionEnabled=NO;
     [MMSpotify addTrack:self.track[@"id"] toPlaylist:p[@"id"] completion:^(BOOL ok){

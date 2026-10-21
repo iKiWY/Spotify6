@@ -5,6 +5,8 @@
 #import "SpotTheme.h"
 #import <QuartzCore/QuartzCore.h>
 
+// Zeichen der Leiste: iOS 6 weiß (schwarze Glanzleiste), sonst die Schriftfarbe
+static UIColor* fg(void){ return [SpotTheme ios6]?[UIColor whiteColor]:[SpotTheme ink]; }
 static NSString* fmt(double s){ if(s<0||s!=s)s=0; int m=(int)s/60, sec=(int)s%60; return [NSString stringWithFormat:@"%d:%02d",m,sec]; }
 
 // Wiedergabe-Symbole (Linien/Flächen wie im großen Player)
@@ -27,11 +29,11 @@ static UIImage* upArrow(CGFloat sz, BOOL circle){
     if(circle){ [[UIColor colorWithWhite:0 alpha:0.6] setFill]; [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(0,0,sz,sz)] fill]; }
     UIBezierPath*p=[UIBezierPath bezierPath]; p.lineWidth=circle?1.8:2; p.lineCapStyle=kCGLineCapRound; p.lineJoinStyle=kCGLineJoinRound;
     [p moveToPoint:CGPointMake(sz*0.3,sz*0.58)]; [p addLineToPoint:CGPointMake(sz*0.5,sz*0.38)]; [p addLineToPoint:CGPointMake(sz*0.7,sz*0.58)];
-    [[SpotTheme ink] setStroke]; [p stroke];
+    [fg() setStroke]; [p stroke];
     UIImage*img=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext(); return img;
 }
 static UIImage* queueGlyph(void){
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(20,16),NO,0); [[SpotTheme ink] setFill];
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(20,16),NO,0); [fg() setFill];
     for(int i=0;i<3;i++){ UIRectFill(CGRectMake(5,1+i*6,15,2)); UIRectFill(CGRectMake(0,1+i*6,2,2)); }
     UIImage*img=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext(); return img;
 }
@@ -44,29 +46,30 @@ static UIImage* queueGlyph(void){
 
 - (id)initWithFrame:(CGRect)f {
     if(!(self=[super initWithFrame:f])) return nil;
-    self.backgroundColor=[SpotTheme bar];
-    UIView*ln=[[UIView alloc] initWithFrame:CGRectMake(0,0,f.size.width,0.5)]; ln.backgroundColor=[SpotTheme line]; ln.autoresizingMask=UIViewAutoresizingFlexibleWidth; [self addSubview:ln];
-    _cover=[[UIImageView alloc] init]; _cover.backgroundColor=[SpotTheme card]; _cover.clipsToBounds=YES; _cover.contentMode=UIViewContentModeScaleAspectFill; [self addSubview:_cover];
-    _title=[[UILabel alloc] init]; _title.font=[UIFont boldSystemFontOfSize:14]; _title.textColor=[SpotTheme ink]; _title.backgroundColor=[UIColor clearColor]; [self addSubview:_title];
-    _artist=[[UILabel alloc] init]; _artist.font=[SpotTheme sub]; _artist.textColor=[SpotTheme muted]; _artist.backgroundColor=[UIColor clearColor]; [self addSubview:_artist];
+    BOOL six=[SpotTheme ios6];
+    self.backgroundColor=six?[UIColor colorWithPatternImage:[SpotTheme toolbarImage:f.size.height]]:[SpotTheme bar];   // iOS 6: schwarze Glanzleiste wie der Mini-Player auf dem iPhone
+    UIView*ln=[[UIView alloc] initWithFrame:CGRectMake(0,0,f.size.width,0.5)]; ln.backgroundColor=six?[UIColor blackColor]:[SpotTheme line]; ln.autoresizingMask=UIViewAutoresizingFlexibleWidth; [self addSubview:ln];
+    _cover=[[UIImageView alloc] init]; _cover.backgroundColor=six?[UIColor colorWithWhite:0.18 alpha:1]:[SpotTheme card]; _cover.clipsToBounds=YES; _cover.contentMode=UIViewContentModeScaleAspectFill; [self addSubview:_cover];
+    _title=[[UILabel alloc] init]; _title.font=[UIFont boldSystemFontOfSize:14]; _title.textColor=fg(); _title.backgroundColor=[UIColor clearColor]; [self addSubview:_title];
+    _artist=[[UILabel alloc] init]; _artist.font=[SpotTheme sub]; _artist.textColor=six?[UIColor colorWithWhite:0.72 alpha:1]:[SpotTheme muted]; _artist.backgroundColor=[UIColor clearColor]; [self addSubview:_artist];
     // Cover + Titel antippen -> großer Player
     _info=[UIButton buttonWithType:UIButtonTypeCustom]; [_info addTarget:self action:@selector(openPlayer) forControlEvents:UIControlEventTouchUpInside]; [self addSubview:_info];
     _shuf=[self btn:@selector(toggleShuffle)]; _prev=[self btn:@selector(prev)]; _play=[self btn:@selector(togglePlay)]; _next=[self btn:@selector(next)];
     _rep=[self btn:@selector(cycleRepeat)]; _queue=[self btn:@selector(openQueue)];
-    [_prev setImage:glyph(@"prev",22,[SpotTheme ink]) forState:UIControlStateNormal]; [_next setImage:glyph(@"next",22,[SpotTheme ink]) forState:UIControlStateNormal];
+    [_prev setImage:glyph(@"prev",22,fg()) forState:UIControlStateNormal]; [_next setImage:glyph(@"next",22,fg()) forState:UIControlStateNormal];
     [_queue setImage:queueGlyph() forState:UIControlStateNormal];
     _full=[self btn:@selector(openPlayer)]; [_full setImage:upArrow(28,NO) forState:UIControlStateNormal];      // ganz rechts: großer Player
     _toSide=[self btn:@selector(coverToSidebar)]; [_toSide setImage:upArrow(18,YES) forState:UIControlStateNormal];   // klein oben rechts am Cover
-    _play.backgroundColor=[SpotTheme ink]; _play.layer.cornerRadius=17;
-    _spin=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray]; _spin.hidesWhenStopped=YES; [self addSubview:_spin];
+    if(!six){ _play.backgroundColor=[SpotTheme ink]; _play.layer.cornerRadius=17; }   // iOS 6: nur das weiße Zeichen (wie die Musik-App)
+    _spin=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:six?UIActivityIndicatorViewStyleWhite:UIActivityIndicatorViewStyleGray]; _spin.hidesWhenStopped=YES; [self addSubview:_spin];
     _cur=[self timeLabel:NSTextAlignmentRight]; _rem=[self timeLabel:0];
     // schlanke Linie: eigene Spurbilder 2 pt hoch (die Standardspur ist deutlich dicker)
     _slider=[[UISlider alloc] init];
     UIImage*(^track)(UIColor*)=^UIImage*(UIColor*c){ UIGraphicsBeginImageContextWithOptions(CGSizeMake(3,2),NO,0); [c setFill]; UIRectFill(CGRectMake(0,0,3,2));
         UIImage*i=[UIGraphicsGetImageFromCurrentImageContext() stretchableImageWithLeftCapWidth:1 topCapHeight:0]; UIGraphicsEndImageContext(); return i; };
-    [_slider setMinimumTrackImage:track([SpotTheme ink]) forState:UIControlStateNormal];
+    [_slider setMinimumTrackImage:track(six?[UIColor colorWithRed:0.40 green:0.86 blue:0.47 alpha:1]:[SpotTheme ink]) forState:UIControlStateNormal];
     [_slider setMaximumTrackImage:track([UIColor colorWithWhite:1 alpha:0.25]) forState:UIControlStateNormal];
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(10,10),NO,0); [[SpotTheme ink] setFill]; [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(0,0,10,10)] fill];
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(10,10),NO,0); [fg() setFill]; [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(0,0,10,10)] fill];
     [_slider setThumbImage:UIGraphicsGetImageFromCurrentImageContext() forState:UIControlStateNormal]; UIGraphicsEndImageContext();
     [_slider addTarget:self action:@selector(scrubStart) forControlEvents:UIControlEventTouchDown];
     [_slider addTarget:self action:@selector(scrubEnd) forControlEvents:UIControlEventTouchUpInside|UIControlEventTouchUpOutside|UIControlEventTouchCancel];
@@ -78,7 +81,7 @@ static UIImage* queueGlyph(void){
 }
 - (UIButton *)btn:(SEL)a { UIButton*b=[UIButton buttonWithType:UIButtonTypeCustom]; [b addTarget:self action:a forControlEvents:UIControlEventTouchUpInside]; [self addSubview:b]; return b; }
 // al = NSTextAlignment-Wert (der Typname ist erst ab iOS 6 markiert)
-- (UILabel *)timeLabel:(NSInteger)al { UILabel*l=[[UILabel alloc] init]; l.font=[UIFont systemFontOfSize:11]; l.textColor=[SpotTheme muted];
+- (UILabel *)timeLabel:(NSInteger)al { UILabel*l=[[UILabel alloc] init]; l.font=[UIFont systemFontOfSize:11]; l.textColor=[SpotTheme ios6]?[UIColor colorWithWhite:0.72 alpha:1]:[SpotTheme muted];
     l.backgroundColor=[UIColor clearColor]; l.textAlignment=al; [self addSubview:l]; return l; }
 
 // Anordnung aus der aktuellen Breite (hoch 768 / quer 1024): links Titel, Mitte Tasten + Fortschritt, rechts Warteschlange
@@ -108,7 +111,7 @@ static UIImage* queueGlyph(void){
     [self tick];
 }
 - (void)setPlaying:(BOOL)playing loading:(BOOL)loading {
-    [_play setImage:glyph(playing?@"pause":@"play",34,[UIColor blackColor]) forState:UIControlStateNormal];
+    [_play setImage:glyph(playing?@"pause":@"play",34,[SpotTheme ios6]?[UIColor whiteColor]:[UIColor blackColor]) forState:UIControlStateNormal];
     _play.hidden=loading; if(loading) [_spin startAnimating]; else [_spin stopAnimating];
     [self drawModes]; [self tick];
 }
