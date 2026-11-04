@@ -1212,6 +1212,9 @@ done:
 // nachfassen; klappt das, bleibt dieser Host bis zum Neustart bei TLS 1.2. Vor dem Senden gescheitert -> Wiederholen ist auch für POST sicher.
 static NSData* httpsReq(NSString*method,NSString*host,NSString*path,NSArray*extra,NSData*body,int*statusOut){ return httpsReqEx(method,host,path,extra,body,statusOut,nil,nil); }
 static NSData* httpsReqEx(NSString*method,NSString*host,NSString*path,NSArray*extra,NSData*body,int*statusOut,MMHttpHead onHead,MMHttpData onData){
+#ifdef DEBUG
+    if([[NSFileManager defaultManager] fileExistsAtPath:MMPath(@".offline-test")]){ if(statusOut)*statusOut=0; return nil; }
+#endif
     static NSMutableSet*only12; @synchronized([NSObject class]){ if(!only12) only12=[NSMutableSet set]; }
     BOOL o12; @synchronized(only12){ o12=[only12 containsObject:host]; }
     int hs=0; NSData*r=httpsReqOnce(method,host,path,extra,body,statusOut,o12,&hs,onHead,onData);
@@ -1508,13 +1511,11 @@ static NSDictionary* spInternalGet(NSString*path,int*st,BOOL*handled){
         if(!j) return nil;
         NSArray*its=j[@"contents"][@"items"], *meta=j[@"contents"][@"metaItems"];
         NSMutableArray*out=[NSMutableArray array];
-        // Spotify lässt "length" bei leeren Playlists weg (0 = Standardwert). Nur wenn überhaupt Längen kommen, fehlende als leer werten.
-        BOOL haveLen=NO; for(id mi in meta) if([mi isKindOfClass:[NSDictionary class]] && [mi[@"length"] isKindOfClass:[NSNumber class]]){ haveLen=YES; break; }
+        // Include empty playlists so newly created lists remain visible and editable.
         for(NSUInteger i=0;i<[its count];i++){
             NSString*u=its[i][@"uri"]; if(![u isKindOfClass:[NSString class]]||![u hasPrefix:@"spotify:playlist:"]) continue;   // Ordner-Marker überspringen
             NSDictionary*mi=(i<[meta count]&&[meta[i] isKindOfClass:[NSDictionary class]])?meta[i]:nil, *a=mi[@"attributes"];
             id len=mi[@"length"];
-            if(([len isKindOfClass:[NSNumber class]] && [len integerValue]==0) || (haveLen && !len)) continue;   // leere Playlists gar nicht zeigen
             NSString*hex=b64ToHex(a[@"picture"]), *pic=hex?[@"https://i.scdn.co/image/" stringByAppendingString:hex]:pictureSizeURL(a);
             NSMutableDictionary*pl=[@{@"id":[u substringFromIndex:17],@"name":[a[@"name"] isKindOfClass:[NSString class]]?a[@"name"]:@"Playlist",
                              @"images":pic?@[@{@"url":pic}]:@[]} mutableCopy];
@@ -1676,7 +1677,78 @@ static NSDictionary* spInternalGet(NSString*path,int*st,BOOL*handled){
         NSData*d=spReq(@"POST",[NSString stringWithFormat:@"/playlist/v2/playlist/%@/changes",playlistId],js,@"application/json;charset=UTF-8",@"application/json",&st);
         BOOL ok=(st>=200&&st<300);
         if(!ok) slog(@"playlist add %@ -> HTTP %d: %.200@",playlistId,st,d?[[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding]:@"");
-        dispatch_async(dispatch_get_main_queue(), ^{ if(done) done(ok); });
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if(ok){
+                [MMCovers invalidatePlaylistCover:playlistId];
+                [[NSNotificationCenter defaultCenter] postNotificationName:@"MMPlaylistTracksChanged" object:playlistId];
+            }
+            if(done) done(ok);
+        });
+    });
+}
+
+// playlist4 change envelopes match the existing addTrack implementation.
+static BOOL playlistChange(NSString*endpoint,NSDictionary*op,NSString*revision){
+    NSMutableDictionary*body=[@{@"deltas":@[@{@"ops":@[op],@"info":@{@"source":@{@"client":@"WEBPLAYER"}}}],
+        @"wantResultingRevisions":@NO,@"wantSyncResult":@NO,@"nonces":@[]} mutableCopy];
+    if(revision.length) body[@"baseRevision"]=revision;
+    int st=0; spReq(@"POST",endpoint,[NSJSONSerialization dataWithJSONObject:body options:0 error:NULL],
+        @"application/json;charset=UTF-8",@"application/json",&st);
+    return st>=200 && st<300;
+}
++ (void)isPlaylistSaved:(NSString *)playlistId completion:(void(^)(BOOL saved, BOOL known))done {
+    [self apiUserAllItems:@"me/playlists?limit=100" completion:^(NSArray*items,NSInteger st){
+        BOOL saved=NO; for(NSDictionary*p in items) if([p[@"id"] isEqual:playlistId]){ saved=YES; break; }
+        if(done) done(saved,items!=nil && st>=200 && st<300);
+    }];
+}
++ (void)setPlaylistSaved:(BOOL)saved playlist:(NSString *)playlistId completion:(void(^)(BOOL ok))done {
+    dispatch_async(dispatch_get_global_queue(0,0), ^{
+        // Remove by URI, never by a potentially stale row number in the user's rootlist.
+        NSString*user=[spUser() stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+        NSDictionary*item=@{@"uri":[@"spotify:playlist:" stringByAppendingString:playlistId]};
+        NSDictionary*op=saved?@{@"kind":@"ADD",@"add":@{@"items":@[item],@"addFirst":@YES}}:
+            @{@"kind":@"REM",@"rem":@{@"items":@[item],@"itemsAsKey":@YES}};
+        BOOL ok=user.length && playlistId.length && playlistChange([NSString stringWithFormat:@"/playlist/v2/user/%@/rootlist/changes",user],op,nil);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if(ok) [[NSNotificationCenter defaultCenter] postNotificationName:@"MMPlaylistsChanged" object:nil];
+            if(done) done(ok);
+        });
+    });
+}
+// Same Delta request used by Spotify's web player, followed by a rootlist ADD.
+// The public Web API rejects this login client with 429 even for a new playlist.
++ (void)createPlaylist:(NSString *)name completion:(void(^)(NSDictionary *playlist, NSInteger status))done {
+    dispatch_async(dispatch_get_global_queue(0,0), ^{
+        NSDictionary*delta=@{@"ops":@[@{@"kind":@"UPDATE_LIST_ATTRIBUTES",@"updateListAttributes":@{
+            @"newAttributes":@{@"values":@{@"name":name,@"formatAttributes":@[],@"pictureSize":@[]},@"noValue":@[]}}}]};
+        int st=0; NSData*data=spReq(@"POST",@"/playlist/v2/playlist",[NSJSONSerialization dataWithJSONObject:delta options:0 error:NULL],
+            @"application/json;charset=UTF-8",@"application/json",&st);
+        id reply=data.length?[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
+        NSString*uri=[reply isKindOfClass:[NSDictionary class]] && [reply[@"uri"] isKindOfClass:[NSString class]]?reply[@"uri"]:nil;
+        NSDictionary*playlist=nil;
+        if(st>=200 && st<300 && [uri hasPrefix:@"spotify:playlist:"] && uri.length>17){
+            NSString*user=[spUser() stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+            NSDictionary*op=@{@"kind":@"ADD",@"add":@{@"items":@[@{@"uri":uri,@"attributes":@{@"public":@NO}}],@"addFirst":@YES}};
+            BOOL saved=playlistChange([NSString stringWithFormat:@"/playlist/v2/user/%@/rootlist/changes",user],op,nil);
+            playlist=@{@"id":[uri substringFromIndex:17],@"name":name,@"saved":@(saved)};
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if(playlist) [[NSNotificationCenter defaultCenter] postNotificationName:@"MMPlaylistsChanged" object:nil];
+            if(done) done(playlist,st);
+        });
+    });
+}
++ (void)renamePlaylist:(NSString *)playlistId name:(NSString *)name completion:(void(^)(BOOL ok))done {
+    dispatch_async(dispatch_get_global_queue(0,0), ^{
+        int st=0; NSDictionary*j=spJSON([NSString stringWithFormat:@"/playlist/v2/playlist/%@?decorate=attributes,owner&from=0&length=0",playlistId],&st);
+        BOOL mine=[j[@"ownerUsername"] isEqual:spUser()];
+        NSDictionary*op=@{@"kind":@"UPDATE_LIST_ATTRIBUTES",@"updateListAttributes":@{@"newAttributes":@{@"values":@{@"name":name}}}};
+        BOOL ok=mine && playlistChange([NSString stringWithFormat:@"/playlist/v2/playlist/%@/changes",playlistId],op,j[@"revision"]);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if(ok) [[NSNotificationCenter defaultCenter] postNotificationName:@"MMPlaylistsChanged" object:nil];
+            if(done) done(ok);
+        });
     });
 }
 
@@ -1741,16 +1813,18 @@ static NSString* apiCachePath(NSString*path){ return [NSString stringWithFormat:
     __block void (^step)(NSString*) = nil;
     step = [^(NSString *p){
         [self apiUser:@"GET" path:p body:nil completion:^(NSDictionary*j, NSInteger st){
+            if(st<200 || st>=300 || !j){ if(done) done(nil,st); step=nil; return; }
             NSDictionary*page=[j isKindOfClass:[NSDictionary class]]?j:nil;
             if(page && ![page[@"items"] isKindOfClass:[NSArray class]] && [page[@"tracks"] isKindOfClass:[NSDictionary class]]) page=page[@"tracks"];  // Playlist: items liegen unter .tracks
             id items=page[@"items"];
-            if([items isKindOfClass:[NSArray class]]) [acc addObjectsFromArray:items];
+            if(![items isKindOfClass:[NSArray class]]){ if(done) done(nil,502); step=nil; return; }
+            [acc addObjectsFromArray:items];
             id next=page[@"next"];
             if([next isKindOfClass:[NSString class]] && [next length]){
                 NSString*rel=next; NSRange r=[next rangeOfString:@"/v1/"];
                 if(r.location!=NSNotFound) rel=[next substringFromIndex:r.location+4];   // volle URL -> relativer Pfad
                 step(rel);
-            } else { if(done)done(acc.count?acc:((st>=200&&st<300)?acc:nil), st); step=nil; }   // fertig -> Zyklus auflösen
+            } else { if(done)done(acc, st); step=nil; }   // fertig -> Zyklus auflösen
         }];
     } copy];
     step(path);
@@ -1821,6 +1895,9 @@ static SCNetworkReachabilityRef reachRef(void){
     return gReach;
 }
 + (BOOL)networkReachable {
+#ifdef DEBUG
+    if([[NSFileManager defaultManager] fileExistsAtPath:MMPath(@".offline-test")]) return NO;
+#endif
     SCNetworkReachabilityFlags f=0;
     return SCNetworkReachabilityGetFlags(reachRef(),&f) && reachFlags(f);
 }

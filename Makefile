@@ -11,7 +11,8 @@ APPLICATION_NAME = Spotify6
 Spotify6_FILES  = $(wildcard music/App/*.m) $(wildcard music/UI/*.m) $(wildcard music/Spot/*.m) $(wildcard music/Spot/*.c)
 Spotify6_FRAMEWORKS = UIKit CoreGraphics Foundation QuartzCore AVFoundation AudioToolbox Security MediaPlayer SystemConfiguration
 MBED = $(THEOS_PROJECT_DIR)/vendor/mbedtls/out/ios
-Spotify6_CFLAGS  = -fobjc-arc -O2 -Wall -Werror \
+# ARM mode avoids startup crashes from Thumb Objective-C IMPs linked with current Apple ld on iOS 6.
+Spotify6_CFLAGS  = -fobjc-arc -marm -O2 -Wall -Werror \
 	-Werror=unguarded-availability -Werror=partial-availability -Wno-deprecated-module-dot-map \
 	-Imusic/App -Imusic/UI -Imusic/Spot -Ivendor/stb -I$(MBED)/include -include $(MBED)/include/mbedtls_ios6_predef.h -include music/App/MMCompat.h \
 	-DTHEOS_LEAN_AND_MEAN   # Theos' Prefix.pch must not import Foundation before MMCompat.h (see there)

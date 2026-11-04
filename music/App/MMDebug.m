@@ -1,5 +1,8 @@
 // MMDebug.m - nur in Debug-Builds (gmake ohne FINALPACKAGE): Fernsteuerung über SSH zum Testen auf dem 3GS.
 // Befehle zeilenweise in Library/Riff/.cmd schreiben; die App liest die Datei jede Sekunde, führt aus und löscht sie.
+//   state                    UI/results/queue/playback/download state -> state.json (no credentials)
+//   tap <title>              dispatch a visible button action; alerttext <text> fills the current prompt
+//   offline on|off           block app HTTPS and report offline (debug builds only); skin spotify|ios6
 //   shot                     alle Fenster -> Library/Riff/shot.png (ohne Statusleiste, die zeichnet das System)
 //   api <pfad>               GET über apiUser -> Library/Riff/api.json
 //   ext <kind> <uri>         roher extended-metadata-Payload als Protobuf-Baum -> Library/Riff/ext.txt
@@ -172,11 +175,53 @@ static void layoutDump(void){
     [o writeToFile:MMPath(@"layout.txt") atomically:YES encoding:NSUTF8StringEncoding error:NULL];
 }
 
+// Device integration helpers; compiled out of release builds.
+static id debugValue(id object,NSString*key){
+    if(!object || !class_getInstanceVariable([object class],[key UTF8String])) return nil;
+    return [object valueForKey:key];
+}
+static void stateDump(void){
+    MMRootController*r=[MMRootController shared];
+    id page=[[r valueForKey:@"_pushedStack"] lastObject]?:[r valueForKey:@"_vcs"][[[r valueForKey:@"_sel"] integerValue]];
+    NSMutableDictionary*d=[NSMutableDictionary dictionaryWithObjectsAndKeys:NSStringFromClass([page class]),@"page",@([r shuffle]),@"shuffle",
+        @([MMAudio isPlaying]),@"playing",@([MMAudio currentTime]),@"time",@([MMAudio duration]),@"duration",nil];
+    for(NSString*k in @[@"_secs",@"_playlists",@"_results",@"_recents",@"_tracks",@"_meta",@"_path",@"_nextPath",@"_firstDone",@"_loadingPage",@"_playLoading",@"_lists",@"_allIds",@"_offline",@"_dlRunning"]){
+        id v=debugValue(page,k); if(v) d[k]=v;
+    }
+    for(NSString*k in @[@"_queue",@"_origQueue",@"_queueIdx",@"_context",@"_curId"]){ id v=debugValue(r,k); if(v)d[k]=v; }
+    UILabel*hint=debugValue(page,@"_hint"); if(hint)d[@"hint"]=@{@"text":hint.text?:@"",@"hidden":@(hint.hidden)};
+    d[@"downloadStatus"]=[MMSpotify downloadStatus]; d[@"downloaded"]=[[MMSpotify downloadedTracks] valueForKey:@"id"];
+    NSData*data=[NSJSONSerialization dataWithJSONObject:d options:NSJSONWritingPrettyPrinted error:NULL];
+    [data writeToFile:MMPath(@"state.json") atomically:YES];
+}
+static UIControl* debugControl(UIView*v,NSString*title){
+    if(v.hidden) return nil;
+    if([v isKindOfClass:[UIButton class]] && [[(UIButton*)v currentTitle] isEqual:title]) return (UIControl*)v;
+    if([v isKindOfClass:[UILabel class]] && [[(UILabel*)v text] isEqual:title]){
+        for(UIView*p=v.superview;p;p=p.superview) if([p isKindOfClass:[UIControl class]]) return (UIControl*)p;
+    }
+    for(UIView*c in [v.subviews reverseObjectEnumerator]){ UIControl*b=debugControl(c,title); if(b)return b; } return nil;
+}
+
 static void run(NSString*line){
     NSArray*w=[line componentsSeparatedByString:@" "]; NSString*c=w[0]; MMRootController*root=[MMRootController shared];
     NSString*rest=w.count>1?[[w subarrayWithRange:NSMakeRange(1,w.count-1)] componentsJoinedByString:@" "]:@"";
     MMLog(@"debug: %@", line);
-    if([c isEqualToString:@"shot"]) shot();
+    if([c isEqualToString:@"offline"]){
+        if([rest isEqualToString:@"on"]) [@"test" writeToFile:MMPath(@".offline-test") atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+        else [[NSFileManager defaultManager] removeItemAtPath:MMPath(@".offline-test") error:NULL];
+        [[NSNotificationCenter defaultCenter] postNotificationName:@"MMNetworkChanged" object:nil userInfo:@{@"reachable":@([MMSpotify networkReachable])}];
+    }
+    else if([c isEqualToString:@"skin"]) [MMRootController switchSkin:rest];
+    else if([c isEqualToString:@"state"]) stateDump();
+    else if([c isEqualToString:@"alerttext"]){
+        for(UIWindow*x in [UIApplication sharedApplication].windows){ UIAlertView*a=findAlert(x); if(a){ [a textFieldAtIndex:0].text=rest; break; } }
+    }
+    else if([c isEqualToString:@"tap"]){
+        UIControl*b=nil; for(UIWindow*x in [[UIApplication sharedApplication].windows reverseObjectEnumerator]){ b=debugControl(x,rest); if(b)break; }
+        [b sendActionsForControlEvents:UIControlEventTouchUpInside]; MMLog(@"debug: tap %@ = %@",rest,b?@"ok":@"missing");
+    }
+    else if([c isEqualToString:@"shot"]) shot();
     else if([c isEqualToString:@"api"]) [MMSpotify apiUser:@"GET" path:rest body:nil completion:^(NSDictionary*j,NSInteger st){
         NSData*d=j?[NSJSONSerialization dataWithJSONObject:j options:NSJSONWritingPrettyPrinted error:NULL]:nil;
         [d?:[NSData data] writeToFile:MMPath(@"api.json") atomically:YES]; MMLog(@"debug: api %@ -> %ld, %lu B",rest,(long)st,(unsigned long)d.length); }];
@@ -190,7 +235,8 @@ static void run(NSString*line){
     else if([c isEqualToString:@"push"] && w.count==2 && [w[1] isEqualToString:@"liked"]) [root pushContent:[[MMTrackListController alloc] initWithTitle:@"Liked Songs" path:@"me/tracks?market=from_token&limit=50"]];   // push liked: lange Liste für scrolltest
     else if([c isEqualToString:@"push"] && w.count>=3){
         NSString*name=w.count>3?[[w subarrayWithRange:NSMakeRange(3,w.count-3)] componentsJoinedByString:@" "]:@"Album";
-        if([w[1] isEqualToString:@"album"]) [root pushContent:[[MMTrackListController alloc] initWithTitle:name path:[@"albums/" stringByAppendingString:w[2]]]];
+        if([w[1] isEqualToString:@"playlist"]) [root pushContent:[[MMTrackListController alloc] initWithTitle:name path:[NSString stringWithFormat:@"playlists/%@?market=from_token",w[2]]]];
+        else if([w[1] isEqualToString:@"album"]) [root pushContent:[[MMTrackListController alloc] initWithTitle:name path:[@"albums/" stringByAppendingString:w[2]]]];
         else [root pushContent:[[MMArtistController alloc] initWithArtistId:w[2] name:w.count>3?name:nil]];
     }
     else if([c isEqualToString:@"queue"] && w.count>=4) [root queueTrack:@{@"id":w[2],@"title":[[w subarrayWithRange:NSMakeRange(3,w.count-3)] componentsJoinedByString:@" "],@"artist":@"test",@"cover":@""} next:[w[1] isEqualToString:@"next"]];

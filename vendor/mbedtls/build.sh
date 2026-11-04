@@ -14,7 +14,7 @@ build() { # $1 variant, $2 clang target, $3 sysroot
   SRC="$WORK/mbedtls-$VER"
   rm -rf "$WORK" && mkdir -p "$WORK"
   tar -xjf "$TARBALL" -C "$WORK"
-  CFLAGS="-target $2 -isysroot $3 -Os -I$SRC/include -I$HERE -include $HERE/mbedtls_ios6_predef.h $WARN"
+  CFLAGS="-target $2 -isysroot $3 -marm -Os -I$SRC/include -I$HERE -include $HERE/mbedtls_ios6_predef.h $WARN"
   make -C "$SRC/library" -j8 CC="xcrun clang" AR="xcrun ar" CFLAGS="$CFLAGS" libmbedcrypto.a libmbedx509.a libmbedtls.a >/dev/null
   xcrun clang $CFLAGS -c "$HERE/mbedtls_ios6_alt.c" -o "$WORK/mbedtls_ios6_alt.o"
   OUT="$HERE/out/$1"
