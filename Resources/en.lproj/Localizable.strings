@@ -208,3 +208,21 @@
 "Cover Flow in sidebar" = "Cover Flow in sidebar";
 "Album/playlist page covers" = "Album/playlist page covers";
 "Search key" = "Search key";
+
+/* Playlist search and management */
+"Songs, artists, albums, playlists …" = "Songs, artists, albums, playlists …";
+"Playlist · %@" = "Playlist · %@";
+"+ Create playlist" = "+ Create playlist";
+"Create playlist" = "Create playlist";
+"Rename playlist" = "Rename playlist";
+"Playlist name" = "Playlist name";
+"More …" = "More …";
+"Remove from Library" = "Remove from Library";
+"Save to Library" = "Save to Library";
+"Remove from Library?" = "Remove from Library?";
+"Saved to Library" = "Saved to Library";
+"Removed from Library" = "Removed from Library";
+"No playable songs." = "No playable songs.";
+"Spotify did not allow this change. Please check your account permissions." = "Spotify did not allow this change. Please check your account permissions.";
+"Playlist created, but the song could not be added. Please try again." = "Playlist created, but the song could not be added. Please try again.";
+"Playlist created, but could not be saved to Library. Open More to retry." = "Playlist created, but could not be saved to Library. Open More to retry.";

@@ -15,5 +15,8 @@
 + (void)precacheLibrary;
 // Playlist ohne eigenes Bild: 2x2-Mosaik aus den ersten Album-Covern (wie die Spotify-App), gemerkt auf der Platte.
 // done(url) mit einer Bild-URL für load:, oder nil wenn keine Titel/Cover da sind.
++ (void)playlistPlaceholderInto:(UIImageView *)imageView;
++ (void)invalidateEmptyPlaylistCover:(NSString *)playlistId;
++ (void)invalidatePlaylistCover:(NSString *)playlistId;
 + (void)playlistCover:(NSString *)playlistId completion:(void(^)(NSString *url))done;                                // Cover schonend (seriell) auf die Platte holen (Offline)
 @end

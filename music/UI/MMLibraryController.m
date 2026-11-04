@@ -9,6 +9,7 @@
 #import "MMSettingsController.h"
 #import "MMSheet.h"
 #import "MMKeepAlive.h"
+#import "MMPlaylistEditor.h"
 #import "MMDownloadsController.h"
 
 @interface MMLibraryController () <UITableViewDataSource, UITableViewDelegate>
@@ -19,6 +20,7 @@
     UILabel *_hint;
     NSArray *_playlists;   // @[ {name,id} ]
     NSString *_nextPath;   // nächste Seite der Playlists (nil = alle da); wird beim Scrollen ans Ende geladen
+    NSUInteger _libraryGeneration;
     BOOL _loadingMore;
     BOOL _loaded;
     UILabel *_hud;                 // untere Status-/Fortschrittsleiste
@@ -65,6 +67,15 @@
     _hud.font=[UIFont boldSystemFontOfSize:13]; _hud.textAlignment=NSTextAlignmentCenter; _hud.hidden=YES;
     _hud.autoresizingMask=UIViewAutoresizingFlexibleTopMargin|UIViewAutoresizingFlexibleWidth; [self.view addSubview:_hud];
 
+    UIButton*create=[UIButton buttonWithType:UIButtonTypeCustom]; create.frame=[SpotTheme ios6]?CGRectMake((W-176)/2,4,176,44):CGRectMake(12,8,W-24,40);
+    [create setTitle:L(@"+ Create playlist") forState:UIControlStateNormal];
+    [SpotTheme styleActionButton:create primary:YES];
+    if(![SpotTheme ios6]) create.titleLabel.font=[UIFont boldSystemFontOfSize:15];
+    [create addTarget:self action:@selector(createPlaylist) forControlEvents:UIControlEventTouchUpInside];
+    UIView*header=[[UIView alloc] initWithFrame:CGRectMake(0,0,W,56)]; [header addSubview:create];
+    create.autoresizingMask=[SpotTheme ios6]?(UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleRightMargin):UIViewAutoresizingFlexibleWidth; _table.tableHeaderView=header;
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(playlistsChanged) name:@"MMPlaylistsChanged" object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(playlistsChanged) name:@"MMPlaylistTracksChanged" object:nil];
     // gedrückt halten → Offline-Download / Verwaltung
     UILongPressGestureRecognizer*lp=[[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(onLongPress:)];
     lp.minimumPressDuration=0.45; [_table addGestureRecognizer:lp];
@@ -74,6 +85,12 @@
     for(NSString*n in @[@"MMDownloadProgress",@"MMDownloadFull",@"MMDownloadError"]) [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(drawDlBtn) name:n object:nil];
     MMAutoMask(self.view);   // iPad: Unteransichten folgen der Breite beim Drehen
 }
+- (void)createPlaylist {
+    [MMPlaylistEditor createWithTrack:nil completion:^(NSDictionary*p){
+        [[MMRootController shared] pushContent:[[MMTrackListController alloc] initWithTitle:p[@"name"] path:[NSString stringWithFormat:@"playlists/%@?market=from_token",p[@"id"]]]];
+    }];
+}
+- (void)playlistsChanged { _loaded=NO; _nextPath=nil; if(self.isViewLoaded) [self refreshPlaylists]; }
 - (void)dlRefresh { [_dlMemo removeAllObjects]; [_table reloadData]; [self updateHasDl]; [self drawDlBtn]; }
 - (void)openDownloads { [[MMRootController shared] pushContent:[[MMDownloadsController alloc] init]]; }   // ✓-Badges nach Download-Ende aktualisieren
 - (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
@@ -157,14 +174,18 @@
 }
 
 - (void)viewWillAppear:(BOOL)animated {
-    [super viewWillAppear:animated];
+    [super viewWillAppear:animated]; [self refreshPlaylists];
+}
+- (void)refreshPlaylists {
     [_dlMemo removeAllObjects];   // Listen könnten inzwischen neu gecacht oder geladen sein
     [self updateHasDl]; [self drawDlBtn];
     if(_loaded) return;
     if(![MMSpotify hasUserToken]){ _hint.text=L(@"Please log in again."); return; }
+    NSUInteger generation=++_libraryGeneration; _loadingMore=NO; _table.tableFooterView=nil;
     _loaded=YES; _hint.text=L(@"Loading your playlists …");
     // erst die zuletzt geladenen Playlists zeigen, frische ersetzen sie still (nur bei Änderung)
     [MMSpotify apiUserCached:@"me/playlists?limit=50" completion:^(NSDictionary*j,NSInteger st,BOOL fresh){
+        if(generation!=_libraryGeneration) return;
         NSArray*items=j[@"items"];
         if(![items isKindOfClass:[NSArray class]]){ _hint.text=(st==401)?L(@"Session expired."):L(@"Couldn't load."); _loaded=NO; return; }
         _playlists=[MMLibraryController parsePlaylists:items]; _hint.hidden=YES;
@@ -179,10 +200,11 @@
 // Nächste 50 Playlists anhängen: nur neue Zeilen einfügen (kein komplettes Neuzeichnen), Kreisel unten solange
 - (void)loadMore {
     if(_loadingMore || !_nextPath) return;
-    _loadingMore=YES; NSString*p=_nextPath;
+    _loadingMore=YES; NSString*p=_nextPath; NSUInteger generation=_libraryGeneration;
     UIActivityIndicatorView*sp=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
     sp.frame=CGRectMake(0,0,_table.bounds.size.width,44); [sp startAnimating]; _table.tableFooterView=sp;
     [MMSpotify apiUser:@"GET" path:p body:nil completion:^(NSDictionary*j,NSInteger st){
+        if(generation!=_libraryGeneration) return;
         _loadingMore=NO; _table.tableFooterView=nil;
         NSArray*items=[j[@"items"] isKindOfClass:[NSArray class]]?j[@"items"]:nil;
         if(!items || ![p isEqualToString:_nextPath]) return;   // Fehler (beim nächsten Scrollen erneut) oder Liste inzwischen neu geladen
@@ -222,7 +244,7 @@
     } else {
         for(UIView*v in th.subviews)[v removeFromSuperview];
         nm.text=_playlists[r-1][@"name"]; nm.textColor=[SpotTheme ink];
-        th.image=nil; th.backgroundColor=[SpotTheme card];
+        [MMCovers playlistPlaceholderInto:th]; th.backgroundColor=[SpotTheme card];
         NSString*cu=_playlists[r-1][@"cover"], *pid=_playlists[r-1][@"id"];
         th.accessibilityIdentifier=pid;                                   // Zelle wiederverwendet? -> Mosaik nur passend setzen
         if(cu.length) [MMCovers thumb:cu size:48 radius:0 into:th];

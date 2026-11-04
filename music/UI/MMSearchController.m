@@ -21,6 +21,8 @@
     UIButton *_unlock;   // "Suche freischalten" ohne eigenen Schlüssel
     NSArray *_results;   // Titel @[ {id,title,artist,cover} ] - zugleich die Abspiel-Queue
     NSArray *_artists;   // @[ {id,name,cover} ]
+    NSArray *_playlists;
+    NSUInteger _searchGeneration;
     NSArray *_albums;    // @[ {id,name,sub,cover} ]
     NSArray *_secs;      // sichtbare Abschnitte in Reihenfolge: @"recent" / @"artists" / @"tracks" / @"albums"
     NSArray *_recents;   // zuletzt aus der Suche geöffnet: @[ {kind: artist|album|track, id, name, sub, cover} ], neueste zuerst
@@ -37,7 +39,7 @@
     // Suchfeld
     UIView*box=[[UIView alloc] initWithFrame:CGRectMake(16,46,W-32,42)]; box.backgroundColor=[UIColor whiteColor]; box.layer.cornerRadius=8; [self.view addSubview:box];
     _field=[[UITextField alloc] initWithFrame:CGRectMake(12,0,W-32-24,42)];
-    _field.placeholder=L(@"Artists, songs …"); _field.font=[UIFont systemFontOfSize:15]; _field.textColor=[UIColor blackColor];
+    _field.placeholder=L(@"Songs, artists, albums, playlists …"); _field.font=[UIFont systemFontOfSize:15]; _field.textColor=[UIColor blackColor];
     _field.returnKeyType=UIReturnKeySearch; _field.delegate=self; _field.autocorrectionType=UITextAutocorrectionTypeNo;
     _field.autoresizingMask=UIViewAutoresizingFlexibleWidth; _field.clearButtonMode=UITextFieldViewModeWhileEditing; _field.contentVerticalAlignment=UIControlContentVerticalAlignmentCenter; [box addSubview:_field];
 
@@ -95,7 +97,8 @@
 // Ohne Suchbegriff: Liste "Zuletzt gesucht" statt Treffern
 - (void)showRecents {
     if(![MMSpotify hasSearchKey]) return;
-    _recents=[self loadRecents]; _results=nil; _artists=nil; _albums=nil;
+    _searchGeneration++;
+    _recents=[self loadRecents]; _results=nil; _artists=nil; _albums=nil; _playlists=nil;
     _secs=_recents.count?@[@"recent"]:@[]; [self fitBottomInset]; [_table reloadData];
     _hint.hidden=(_recents.count>0); _hint.text=L(@"Find millions of songs.");
 }
@@ -109,7 +112,7 @@
     BOOL has=[MMSpotify hasSearchKey];
     _unlock.hidden=has; _field.enabled=has; _field.superview.alpha=has?1:0.4;
     _sbar.userInteractionEnabled=has; _sbar.alpha=has?1:0.5;
-    if(!has){ _results=nil; _artists=nil; _albums=nil; _secs=nil; [_table reloadData]; _hint.hidden=NO;
+    if(!has){ _searchGeneration++; _results=nil; _artists=nil; _albums=nil; _playlists=nil; _secs=nil; [_table reloadData]; _hint.hidden=NO;
         _hint.frame=CGRectMake(20,120,self.view.bounds.size.width-40,64);
         _hint.text=L(@"Search needs your own free Spotify key. Set it up once in about 3 minutes."); }
     else if(!_results.count){ _hint.frame=CGRectMake(20,140,self.view.bounds.size.width-40,40); _hint.text=L(@"Find millions of songs."); }
@@ -138,10 +141,14 @@ static NSString* firstArtist(NSDictionary*x){ id a=x[@"artists"]; return ([a isK
 static NSArray* items(NSDictionary*j,NSString*k){ id v=[j[k] isKindOfClass:[NSDictionary class]]?j[k][@"items"]:nil; return [v isKindOfClass:[NSArray class]]?v:@[]; }
 
 - (void)doSearch:(NSString *)q {
-    if(!q.length) return;
+    q=[q stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if(!q.length){ [self showRecents]; return; }
+    NSUInteger generation=++_searchGeneration;
+    _secs=@[]; [_table reloadData];
     _hint.text=L(@"Searching…"); _hint.hidden=NO;
-    NSString*enc=[q stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
-    [MMSpotify webGet:[NSString stringWithFormat:@"search?q=%@&type=track,artist,album&limit=10",enc] completion:^(NSDictionary*j,NSInteger st){
+    NSString*enc=(__bridge_transfer NSString*)CFURLCreateStringByAddingPercentEscapes(NULL,(__bridge CFStringRef)q,NULL,CFSTR("&=+?#/"),kCFStringEncodingUTF8);
+    [MMSpotify webGet:[NSString stringWithFormat:@"search?q=%@&type=track,artist,album,playlist&limit=10",enc] completion:^(NSDictionary*j,NSInteger st){
+        if(generation!=_searchGeneration) return;
         if(st==429){ _hint.text=L(@"Too many requests – wait a moment and retry."); _hint.hidden=NO; return; }
         NSMutableArray*tr=[NSMutableArray array], *ar=[NSMutableArray array], *al=[NSMutableArray array];
         for(NSDictionary*t in items(j,@"tracks")){ if(![t isKindOfClass:[NSDictionary class]]||!str(t[@"id"]).length) continue;
@@ -153,24 +160,32 @@ static NSArray* items(NSDictionary*j,NSString*k){ id v=[j[k] isKindOfClass:[NSDi
             NSString*yr=str(a[@"release_date"]); if(yr.length>4) yr=[yr substringToIndex:4];
             NSString*sub=yr.length?[NSString stringWithFormat:@"%@ · %@",firstArtist(a),yr]:firstArtist(a);
             [al addObject:@{@"id":a[@"id"],@"name":str(a[@"name"]),@"sub":sub,@"cover":[MMCovers bestURL:a[@"images"]]?:@""}]; if(al.count>=6) break; }
-        _results=tr; _artists=ar; _albums=al;
+        NSMutableArray*pl=[NSMutableArray array];
+        for(id p in items(j,@"playlists")){
+            if(![p isKindOfClass:[NSDictionary class]] || !str(p[@"id"]).length) continue;
+            NSDictionary*owner=[p[@"owner"] isKindOfClass:[NSDictionary class]]?p[@"owner"]:nil;
+            NSString*by=str(owner[@"display_name"]); if(!by.length) by=str(owner[@"id"]);
+            [pl addObject:@{@"id":p[@"id"],@"name":str(p[@"name"]),@"sub":by,@"cover":[MMCovers bestURL:p[@"images"]]?:@""}];
+        }
+        _results=tr; _artists=ar; _albums=al; _playlists=pl;
         NSMutableArray*secs=[NSMutableArray array];
         if(ar.count)[secs addObject:@"artists"];
         if(tr.count)[secs addObject:@"tracks"];
         if(al.count)[secs addObject:@"albums"];
+        if(pl.count)[secs addObject:@"playlists"];
         _secs=secs; [self fitBottomInset]; [_table reloadData]; [_table setContentOffset:CGPointZero animated:NO];
         if(!secs.count){ _hint.text=![MMSpotify networkReachable]?L(@"You're offline. Search needs an internet connection."):(st>=500)?L(@"Spotify isn't responding – please try again."):(st==401)?L(@"Your search key no longer works. Long-press \"Search\" at the top to change it."):L(@"Nothing found."); _hint.hidden=NO; return; }
         _hint.hidden=YES;
     }];
 }
 
-- (NSArray *)rowsOf:(NSInteger)s { NSString*k=_secs[s]; return [k isEqualToString:@"recent"]?_recents:[k isEqualToString:@"artists"]?_artists:[k isEqualToString:@"albums"]?_albums:_results; }
+- (NSArray *)rowsOf:(NSInteger)s { NSString*k=_secs[s]; return [k isEqualToString:@"recent"]?_recents:[k isEqualToString:@"artists"]?_artists:[k isEqualToString:@"albums"]?_albums:[k isEqualToString:@"playlists"]?_playlists:_results; }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return _secs.count; }
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { return [self rowsOf:s].count; }
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s { return [SpotTheme ios6]?22:36; }
 - (UIView *)tableView:(UITableView *)tv viewForHeaderInSection:(NSInteger)s {
     NSString*k=_secs[s];
-    NSString*title=[k isEqualToString:@"recent"]?L(@"Recent searches"):[k isEqualToString:@"artists"]?L(@"Artists"):[k isEqualToString:@"albums"]?L(@"Albums"):L(@"Songs");
+    NSString*title=[k isEqualToString:@"recent"]?L(@"Recent searches"):[k isEqualToString:@"artists"]?L(@"Artists"):[k isEqualToString:@"albums"]?L(@"Albums"):[k isEqualToString:@"playlists"]?L(@"Playlists"):L(@"Songs");
     if([SpotTheme ios6]){   // iOS-6-Abschnittskopf; "Löschen" rechts in Weiß
         UIView*v=[SpotTheme plainSectionHeader:title width:tv.bounds.size.width];
         if([k isEqualToString:@"recent"]){ v.userInteractionEnabled=YES;
@@ -206,13 +221,13 @@ static NSArray* items(NSDictionary*j,NSString*k){ id v=[j[k] isKindOfClass:[NSDi
         NSString*kind=r[@"kind"];
         cov.layer.cornerRadius=[kind isEqual:@"artist"]?24:4;
         ((UILabel*)[c.contentView viewWithTag:2]).text=r[@"name"];
-        ((UILabel*)[c.contentView viewWithTag:3]).text=[kind isEqual:@"artist"]?L(@"Artist"):[kind isEqual:@"album"]?LF(@"Album · %@",r[@"sub"]?:@""):LF(@"Song · %@",r[@"sub"]?:@"");
+        ((UILabel*)[c.contentView viewWithTag:3]).text=[kind isEqual:@"artist"]?L(@"Artist"):[kind isEqual:@"album"]?LF(@"Album · %@",r[@"sub"]?:@""):[kind isEqual:@"playlist"]?LF(@"Playlist · %@",r[@"sub"]?:@""):LF(@"Song · %@",r[@"sub"]?:@"");
         cov.image=nil; [MMCovers load:r[@"cover"] into:cov];
         return c;
     }
     cov.layer.cornerRadius=[k isEqualToString:@"artists"]?24:4;   // Artists rund wie in der Spotify-App
     ((UILabel*)[c.contentView viewWithTag:2]).text=[k isEqualToString:@"tracks"]?r[@"title"]:r[@"name"];
-    ((UILabel*)[c.contentView viewWithTag:3]).text=[k isEqualToString:@"tracks"]?r[@"artist"]:[k isEqualToString:@"albums"]?r[@"sub"]:L(@"Artist");
+    ((UILabel*)[c.contentView viewWithTag:3]).text=[k isEqualToString:@"tracks"]?r[@"artist"]:([k isEqualToString:@"albums"]||[k isEqualToString:@"playlists"])?r[@"sub"]:L(@"Artist");
     cov.image=nil; [MMCovers load:r[@"cover"] into:cov];
     return c;
 }
@@ -221,12 +236,13 @@ static NSArray* items(NSDictionary*j,NSString*k){ id v=[j[k] isKindOfClass:[NSDi
     [tv deselectRowAtIndexPath:ip animated:YES];   // Auswahl nicht stehen lassen (sonst bleibt die Schrift weiß)
     [self.view endEditing:YES];
     NSString*k=_secs[ip.section]; NSDictionary*r=[self rowsOf:ip.section][ip.row];
-    NSString*kind=[k isEqualToString:@"recent"]?r[@"kind"]:[k isEqualToString:@"artists"]?@"artist":[k isEqualToString:@"albums"]?@"album":@"track";
+    NSString*kind=[k isEqualToString:@"recent"]?r[@"kind"]:[k isEqualToString:@"artists"]?@"artist":[k isEqualToString:@"albums"]?@"album":[k isEqualToString:@"playlists"]?@"playlist":@"track";
     // merken (zuletzt angetippt nach oben); Titel speichern Name + Artist, Alben "Artist · Jahr"
     NSDictionary*e=[k isEqualToString:@"recent"]?r:@{@"kind":kind,@"id":r[@"id"],@"name":([kind isEqual:@"track"]?r[@"title"]:r[@"name"])?:@"",
-                                                     @"sub":([kind isEqual:@"track"]?r[@"artist"]:[kind isEqual:@"album"]?r[@"sub"]:@"")?:@"",@"cover":r[@"cover"]?:@""};
+                                                     @"sub":([kind isEqual:@"track"]?r[@"artist"]:([kind isEqual:@"album"]||[kind isEqual:@"playlist"])?r[@"sub"]:@"")?:@"",@"cover":r[@"cover"]?:@""};
     [self remember:e];
     if([kind isEqual:@"artist"]){ [[MMRootController shared] pushContent:[[MMArtistController alloc] initWithArtistId:e[@"id"] name:e[@"name"]]]; return; }
+    if([kind isEqual:@"playlist"]){ [[MMRootController shared] pushContent:[[MMTrackListController alloc] initWithTitle:e[@"name"] path:[NSString stringWithFormat:@"playlists/%@?market=from_token",e[@"id"]]]]; return; }
     if([kind isEqual:@"album"]){ [[MMRootController shared] pushContent:[[MMTrackListController alloc] initWithTitle:e[@"name"] path:[@"albums/" stringByAppendingString:e[@"id"]]]]; return; }
     if([k isEqualToString:@"recent"]) [[MMRootController shared] playList:@[[MMSearchController trackOf:e]] index:0];
     else [[MMRootController shared] playList:_results index:ip.row];   // alle gefundenen Titel = Queue
