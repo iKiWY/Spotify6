@@ -132,7 +132,7 @@
         _hud.hidden=YES;
         NSArray*ids=[self idsFromItems:items];
         if(!ids.count){ [self toast:L(@"Couldn't load tracks.")]; return; }
-        for(id it in items){ if(![it isKindOfClass:[NSDictionary class]])continue; id tw=((NSDictionary*)it)[@"track"]; NSDictionary*t=[tw isKindOfClass:[NSDictionary class]]?tw:(NSDictionary*)it; id alb=t[@"album"]; if([alb isKindOfClass:[NSDictionary class]]){ NSString*cu=[MMCovers bestURL:alb[@"images"]]; if(cu.length)[MMCovers prefetch:cu]; } }  // Cover offline mit runterladen
+        for(id it in items){ if(![it isKindOfClass:[NSDictionary class]])continue; id tw=((NSDictionary*)it)[@"track"]; NSDictionary*t=[tw isKindOfClass:[NSDictionary class]]?tw:(NSDictionary*)it; id alb=t[@"album"]; if([alb isKindOfClass:[NSDictionary class]]){ NSString*cu=[MMCovers smallURL:alb[@"images"]]; if(cu.length)[MMCovers prefetch:cu]; } }  // Cover offline mit runterladen
         _pressedIds=ids; [self showSheet];
     }];
 }
@@ -173,7 +173,7 @@
 }
 + (NSArray *)parsePlaylists:(NSArray *)items {   // auch für die iPad-Seitenleiste
     NSMutableArray*out=[NSMutableArray array];
-    for(NSDictionary*p in items){ if([p isKindOfClass:[NSDictionary class]]&&p[@"id"]) [out addObject:@{@"name":p[@"name"]?:L(@"Playlist"),@"id":p[@"id"],@"cover":[MMCovers bestURL:p[@"images"]]?:@""}]; }
+    for(NSDictionary*p in items){ if([p isKindOfClass:[NSDictionary class]]&&p[@"id"]) [out addObject:@{@"name":p[@"name"]?:L(@"Playlist"),@"id":p[@"id"],@"cover":[MMCovers smallURL:p[@"images"]]?:@""}]; }
     return out;
 }
 // Nächste 50 Playlists anhängen: nur neue Zeilen einfügen (kein komplettes Neuzeichnen), Kreisel unten solange

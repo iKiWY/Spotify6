@@ -43,7 +43,7 @@
         for(NSDictionary*p in items){ if(![p isKindOfClass:[NSDictionary class]]||![p[@"id"] isKindOfClass:[NSString class]]) continue;
             BOOL mine=[p[@"owner"] isKindOfClass:[NSDictionary class]] && [p[@"owner"][@"id"] isEqual:me];
             if(!mine && ![p[@"collaborative"] boolValue]) continue;   // fremde Playlists lassen sich nicht ändern
-            [out addObject:@{@"id":p[@"id"],@"name":[p[@"name"] isKindOfClass:[NSString class]]?p[@"name"]:L(@"Playlist"),@"cover":[MMCovers bestURL:p[@"images"]]?:@""}]; }
+            [out addObject:@{@"id":p[@"id"],@"name":[p[@"name"] isKindOfClass:[NSString class]]?p[@"name"]:L(@"Playlist"),@"cover":[MMCovers smallURL:p[@"images"]]?:@""}]; }
         _lists=out; _hint.hidden=(out.count>0); if(!out.count) _hint.text=L(@"You have no playlists of your own yet.");
         [_table reloadData];
     }];
