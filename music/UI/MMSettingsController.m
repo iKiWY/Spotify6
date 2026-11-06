@@ -61,7 +61,9 @@
       @{@"title":L(@"Downloads"),@"footer":L(@"Background download keeps saving offline songs while Spotify6 is in the background."),
         @"rows":@[@{@"kind":@"link",@"title":L(@"Downloaded songs"),@"key":@"downloads",
                     @"detail":LF(@"%lu · %@",(unsigned long)dl.count,[MMTrackListController fmtBytes:dlBytes])},
-                  @{@"kind":@"switch",@"title":L(@"Background download"),@"key":@"bg"}]},
+                  @{@"kind":@"switch",@"title":L(@"Background download"),@"key":@"bg"},
+                  @{@"kind":@"switch",@"title":@"Repeat liked songs",@"key":@"likedRepeat"},
+                  @{@"kind":@"link",@"title":@"Daily liked songs limit",@"key":@"likedBudget",@"detail":[NSString stringWithFormat:@"%.0f MB",[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyBudgetMB"]?[[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyBudgetMB"] doubleValue]:512]}]},
       @{@"title":L(@"Song cache"),@"footer":L(@"Recently played songs are kept (up to 500 MB) so they play again without downloading."),
         @"rows":@[@{@"kind":@"info",@"title":L(@"In use"),@"detail":[MMTrackListController fmtBytes:[MMSpotify songCacheBytes]]},
                   @{@"kind":@"button",@"title":L(@"Clear song cache"),@"key":@"clearcache"}]},
@@ -83,13 +85,15 @@
 }
 - (BOOL)valueFor:(NSString *)key {
     if([key isEqual:@"bg"]) return [MMKeepAlive enabled];
+    if([key isEqual:@"likedRepeat"]) return [[NSUserDefaults standardUserDefaults] boolForKey:@"likedDailyRepeat"] ;
     if([key isEqual:@"cflow"]) return [MMRootController coverFlowOnRotate];
     if([key isEqual:@"ncw"]){ id v=[[NSUserDefaults standardUserDefaults] objectForKey:@"ncWidget"]; return v?[v boolValue]:YES; }   // liest das Widget in SpringBoard
     return [MMTrackListController coverStyle];
 }
 - (void)switched:(UISwitch *)sw {
-    NSString*key=@[@"bg",@"cflow",@"cover",@"ncw"][sw.tag];
+    NSString*key=sw.accessibilityIdentifier ?: @[@"bg",@"cflow",@"cover",@"ncw"][sw.tag];
     if([key isEqual:@"bg"]) [MMKeepAlive setEnabled:sw.on];
+    else if([key isEqual:@"likedRepeat"]){ [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:@"likedDailyRepeat"]; [[NSUserDefaults standardUserDefaults] synchronize]; }
     else if([key isEqual:@"ncw"]){ [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:@"ncWidget"]; [[NSUserDefaults standardUserDefaults] synchronize]; }
     else if([key isEqual:@"cflow"]) [MMRootController setCoverFlowOnRotate:sw.on];
     else [MMTrackListController setCoverStyle:sw.on];   // gilt ab dem nächsten Öffnen einer Liste
@@ -112,7 +116,7 @@
     c.textLabel.adjustsFontSizeToFitWidth=YES; c.textLabel.minimumFontSize=12;   // lange Namen neben dem Schalter verkleinern statt abschneiden
     if([kind isEqual:@"switch"]){
         UISwitch*sw=[[UISwitch alloc] init]; sw.onTintColor=[SpotTheme green]; sw.on=[self valueFor:r[@"key"]];
-        sw.tag=[@[@"bg",@"cflow",@"cover",@"ncw"] indexOfObject:r[@"key"]];
+        sw.tag=[@[@"bg",@"cflow",@"cover",@"ncw"] indexOfObject:r[@"key"]]; sw.accessibilityIdentifier=r[@"key"];
         [sw addTarget:self action:@selector(switched:) forControlEvents:UIControlEventValueChanged]; c.accessoryView=sw;
     } else if([kind isEqual:@"link"]){ c.accessoryType=UITableViewCellAccessoryDisclosureIndicator; c.selectionStyle=UITableViewCellSelectionStyleGray; }
     else if([kind isEqual:@"button"]){   // Knopf-Zeile: Text mittig; Abmelden rot
@@ -175,7 +179,7 @@ static UIImage* chevron(void){
     CGFloat right=W-16;
     if([kind isEqual:@"switch"]){
         UISwitch*sw=[[UISwitch alloc] init]; sw.onTintColor=[SpotTheme green]; sw.on=[self valueFor:r[@"key"]];
-        sw.tag=[@[@"bg",@"cflow",@"cover",@"ncw"] indexOfObject:r[@"key"]];
+        sw.tag=[@[@"bg",@"cflow",@"cover",@"ncw"] indexOfObject:r[@"key"]]; sw.accessibilityIdentifier=r[@"key"];
         sw.frame=CGRectMake(right-sw.frame.size.width,(54-sw.frame.size.height)/2,sw.frame.size.width,sw.frame.size.height);
         [sw addTarget:self action:@selector(switched:) forControlEvents:UIControlEventValueChanged]; [c.contentView addSubview:sw];
     } else if([kind isEqual:@"link"]){
@@ -209,6 +213,7 @@ static UIImage* chevron(void){
             [MMRootController switchSkin:sk];   // Oberfläche neu aufbauen, Wiedergabe läuft weiter
         }];
     }
+    else if([key isEqual:@"likedBudget"]) [MMSheet showIn:[MMRootController shared].view title:@"Daily liked songs limit" subtitle:@"Choose the maximum estimated audio space" options:@[@"256 MB",@"512 MB",@"1 GB"] done:^(NSInteger i){ if(i>=0){ double mb=i==0?256.0:i==1?512.0:1024.0; [[NSUserDefaults standardUserDefaults] setDouble:mb forKey:@"likedDailyBudgetMB"]; [[NSUserDefaults standardUserDefaults] synchronize]; [self build]; [_table reloadData]; } }];
     else if([key isEqual:@"downloads"]) [[MMRootController shared] pushContent:[[MMDownloadsController alloc] init]];
     else if([key isEqual:@"clearcache"]){ [MMSpotify clearSongCache]; [self build]; [_table reloadData]; }
 }

@@ -19,6 +19,7 @@ void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Librar
 // Netz: ist eine Verbindung da? Beobachtet Änderungen und meldet "MMNetworkChanged" (userInfo reachable=@BOOL).
 // Kommt das Netz zurück, verbindet sich die Wiedergabe-Session von selbst neu.
 + (BOOL)networkReachable;
++ (BOOL)wifiReachable;
 + (void)startNetworkWatch;
 // Auto-Login mit gespeicherten Zugangsdaten (kein Passwort/Browser nötig).
 + (void)loginStoredWithCompletion:(void(^)(BOOL ok, NSString *username, NSString *error))done;
@@ -36,6 +37,7 @@ void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Librar
 // Reiht Tracks in die globale Download-Warteschlange ein (mehrere Playlists nacheinander).
 // Status per Notification: MMDownloadProgress {done,total} · MMDownloadDone {ok} · MMDownloadFull
 + (void)queueDownloadTracks:(NSArray *)trackIds;
++ (void)queueLikedDailyTracks:(NSArray *)trackIds;
 + (void)removeDownloads:(NSArray *)trackIds;
 // Offline-Playlists dauerhaft merken -> beim Start werden fehlende Tracks automatisch weitergeladen.
 + (void)markOffline:(NSString *)name trackIds:(NSArray *)trackIds;

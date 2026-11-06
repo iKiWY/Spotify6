@@ -224,6 +224,7 @@ MM_IOS6_END
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(saveState) name:UIApplicationWillTerminateNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlProgress:) name:@"MMDownloadProgress" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlDone:) name:@"MMDownloadDone" object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlWifiPaused:) name:@"MMDownloadWifiPaused" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlFull:) name:@"MMDownloadFull" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlError:) name:@"MMDownloadError" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(trackLoadProgress:) name:MMTrackLoadProgress object:nil];
@@ -533,6 +534,7 @@ MM_IOS6_END
     long ok=(long)[n.userInfo[@"ok"] integerValue], una=(long)[n.userInfo[@"unavailable"] integerValue];
     [self showDownloadMessage:una>0?LF(@"✓  %ld saved offline · %ld not on Spotify",ok,una):LF(@"✓  %ld tracks saved offline",ok)];
 }
+- (void)dlWifiPaused:(NSNotification *)n { [self showDownloadMessage:@"Daily offline selection paused · Wi-Fi required"]; }
 - (void)dlFull:(NSNotification *)n { [self showDownloadMessage:L(@"Storage full, download stopped")]; }
 - (void)dlError:(NSNotification *)n { [self showDownloadMessage:L(@"Connection error, download stopped. Please restart")]; }
 
