@@ -13,6 +13,7 @@
 #import "MMCovers.h"
 #import "MeshL10n.h"
 #import "MMHistory.h"
+#import "MMLastFM.h"
 #import "MMQueueController.h"
 #import "MMLayout.h"
 #import "MMPadSidebar.h"
@@ -46,6 +47,7 @@ static MMRootController *gRoot;
     MMCoverFlowView *_cflow; BOOL _cflowManual;   // Cover Flow (quer); manual = über Menü geöffnet   // iPod-Modus (liegt über allem, Wiedergabe läuft hier weiter)
     double _resumePos, _pendingSeek; BOOL _needsResume;
     NSTimeInterval _playStartTS;   // wann die aktuelle Wiedergabe tatsächlich startete (gegen Finish-Kaskade)
+    NSTimer *_lastFmTimer; double _lastFmLastPosition, _lastFmListened; long long _lastFmStartedAt; BOOL _lastFmScrobbled;
     UIView *_dlBar, *_dlProg; UILabel *_dlLbl;   // globale Offline-Download-Leiste
     NSTimeInterval _dlSince; BOOL _dlCompact;      // nach ein paar Sekunden nur noch dünne Linie
     NSMutableArray *_pushedStack;                 // im Inhaltsbereich geöffnete Ansichten (Titelliste, Artist, Album …), oberste zuletzt
@@ -180,6 +182,7 @@ MM_IOS6_END
     });
 }
 - (void)retire {
+    [_lastFmTimer invalidate]; _lastFmTimer=nil;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     MM_IOS6_BEGIN if([AVAudioSession sharedInstance].delegate==(id)self) [AVAudioSession sharedInstance].delegate=nil; MM_IOS6_END   // iOS 5: Unterbrechungen gehen an die neue Oberfläche
 }
@@ -219,6 +222,9 @@ MM_IOS6_END
 
 - (void)loadView {
     gRoot = self;
+    _lastFmTimer=[NSTimer timerWithTimeInterval:1.0 target:self selector:@selector(lastFmTick) userInfo:nil repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:_lastFmTimer forMode:NSRunLoopCommonModes];
+    [MMLastFM flushQueuedScrobbles];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(trackFinished) name:@"MMAudioDidFinish" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(saveState) name:UIApplicationDidEnterBackgroundNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(saveState) name:UIApplicationWillTerminateNotification object:nil];
@@ -653,10 +659,33 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
         _playStartTS=0; [MMAudio stop]; [self drawNpPlay];
         return;
     }
+    [self finishLastFMTrack];
     if(_repeatMode==2 && _curId.length){ [self playTrackId:_curId title:_curTitle artist:_curArtist cover:_curCover]; return; }   // Titel wiederholen
     if(!_userQueue.count && ![self nextUpEnabled]){ [self drawNpPlay]; [self updateNowPlaying]; return; }   // "Als Nächstes" aus: hier Schluss
     if(_userQueue.count || (_queue.count && (_queueIdx+1<(NSInteger)_queue.count || _repeatMode==1))) [self playNext];
     else [self drawNpPlay];   // Ende der Liste: Button zeigt wieder "Play"
+}
+
+- (void)lastFmTick {
+    if(_playStartTS<=0 || !_curId.length) return;
+    double position=[MMAudio currentTime];
+    if([MMAudio isPlaying]){
+        double delta=position-_lastFmLastPosition;
+        if(delta>0 && delta<=5.0) _lastFmListened+=delta; // ignore seeks and long pauses in the main run loop
+    }
+    _lastFmLastPosition=position;
+    double duration=[MMAudio duration];
+    if(duration>30 && _lastFmListened>=MIN(duration/2.0,240.0)) [self finishLastFMTrack];
+}
+- (void)finishLastFMTrack {
+    if(_lastFmScrobbled || !_curId.length) return;
+    double duration=[MMAudio duration];
+    if(duration<=30 || _lastFmListened<MIN(duration/2.0,240.0)) return;
+    _lastFmScrobbled=YES;
+    [MMLastFM scrobbleTitle:_curTitle artist:_curArtist album:_curAlbum duration:duration timestamp:_lastFmStartedAt];
+}
+- (void)lastFmNowPlaying {
+    if(_playStartTS>0) [MMLastFM updateNowPlayingTitle:_curTitle artist:_curArtist album:_curAlbum duration:[MMAudio duration]];
 }
 // nächsten Track im Hintergrund vorladen
 - (void)prefetchNext {
@@ -671,6 +700,8 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
 }
 
 - (void)playTrackId:(NSString *)trackId title:(NSString *)title artist:(NSString *)artist cover:(NSString *)cover {
+    [self finishLastFMTrack];
+    _playStartTS=0; _lastFmListened=0; _lastFmLastPosition=0; _lastFmStartedAt=0; _lastFmScrobbled=NO;
     _needsResume=NO;   // neue Wiedergabe: "Play" soll danach diesen Titel fortsetzen, nicht den gespeicherten der letzten Sitzung
     // Länge aus der Liste (ms), damit beim Spielen während des Downloads gleich die Restzeit stimmt; sonst aus den Metadaten unten
     double dur=0; for(NSDictionary*q in [(_userQueue?:@[]) arrayByAddingObjectsFromArray:_queue?:@[]]) if([q[@"id"] isEqual:trackId] && [q[@"dur"] doubleValue]>0){ dur=[q[@"dur"] doubleValue]/1000.0; break; }
@@ -701,6 +732,7 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
             [self loadNpCover:_curCover];
             if(_player)[_player updateTitle:_curTitle artist:_curArtist cover:_curCover];
             [self updateNowPlaying];
+            [self lastFmNowPlaying];
         }
     }];
     // echten Ton starten -> Spinner während des Ladens
@@ -710,7 +742,12 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
 
         [_npSpinner stopAnimating]; _npPlay.hidden=NO; _loading=NO; if(![MMAudio isBuffering]) [self showLoadProgress:-1];   // spielt schon, lädt noch: grün bleibt
         if(!ok) [self showPlayError:e?:@""];
-        if(ok){ _playStartTS=[NSDate timeIntervalSinceReferenceDate]; if(_pendingSeek>0){ [MMAudio seekTo:_pendingSeek]; _pendingSeek=0; } [self prefetchNext]; [self saveState]; }
+        if(ok){
+            _playStartTS=[NSDate timeIntervalSinceReferenceDate]; _lastFmStartedAt=(long long)[[NSDate date] timeIntervalSince1970];
+            _lastFmLastPosition=[MMAudio currentTime]; _lastFmListened=0; _lastFmScrobbled=NO;
+            if(_pendingSeek>0){ [MMAudio seekTo:_pendingSeek]; _lastFmLastPosition=[MMAudio currentTime]; _pendingSeek=0; }
+            [self lastFmNowPlaying]; [self prefetchNext]; [self saveState];
+        }
         [self drawNpPlay]; [self updateNowPlaying];
     }];
 }
@@ -781,6 +818,7 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
 }
 - (void)networkChanged:(NSNotification *)n {
     BOOL ok=[n.userInfo[@"reachable"] boolValue];
+    if(ok) [MMLastFM flushQueuedScrobbles];
     [self showDownloadMessage:ok?L(@"Back online"):L(@"Offline – downloaded songs still play")];
 }
 - (NSDictionary *)nowPlaying {
