@@ -61,6 +61,7 @@
       @{@"title":L(@"Downloads"),@"footer":L(@"Background download keeps saving offline songs while Spotify6 is in the background."),
         @"rows":@[@{@"kind":@"link",@"title":L(@"Downloaded songs"),@"key":@"downloads",
                     @"detail":LF(@"%lu · %@",(unsigned long)dl.count,[MMTrackListController fmtBytes:dlBytes])},
+                  @{@"kind":@"button",@"title":@"Delete all offline downloads",@"key":@"clearDownloads"},
                   @{@"kind":@"switch",@"title":L(@"Background download"),@"key":@"bg"},
                   @{@"kind":@"switch",@"title":@"Repeat liked songs",@"key":@"likedRepeat"},
                   @{@"kind":@"link",@"title":@"Daily liked songs limit",@"key":@"likedBudget",@"detail":[NSString stringWithFormat:@"%.0f MB",[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyBudgetMB"]?[[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyBudgetMB"] doubleValue]:512]}]},
@@ -215,6 +216,17 @@ static UIImage* chevron(void){
     }
     else if([key isEqual:@"likedBudget"]) [MMSheet showIn:[MMRootController shared].view title:@"Daily liked songs limit" subtitle:@"Choose the maximum estimated audio space" options:@[@"256 MB",@"512 MB",@"1 GB"] done:^(NSInteger i){ if(i>=0){ double mb=i==0?256.0:i==1?512.0:1024.0; [[NSUserDefaults standardUserDefaults] setDouble:mb forKey:@"likedDailyBudgetMB"]; [[NSUserDefaults standardUserDefaults] synchronize]; [self build]; [_table reloadData]; } }];
     else if([key isEqual:@"downloads"]) [[MMRootController shared] pushContent:[[MMDownloadsController alloc] init]];
+    else if([key isEqual:@"clearDownloads"]){
+        NSArray*files=[MMSpotify downloadedTracks]; long long bytes=0; for(NSDictionary*d in files) bytes+=[d[@"bytes"] longLongValue];
+        [MMSheet showIn:[MMRootController shared].view title:@"Delete all offline downloads?"
+            subtitle:[NSString stringWithFormat:@"Delete %lu songs (%@) from this iPhone? Your Spotify likes and library will stay intact.",(unsigned long)files.count,[MMTrackListController fmtBytes:bytes]]
+            options:@[@"Delete all downloads"] done:^(NSInteger i){
+                if(i!=0) return;
+                if(![MMSpotify clearAllDownloads]){ [[MMRootController shared] showDownloadMessage:@"Wait for the current download to finish, then try again."]; return; }
+                [[MMRootController shared] showDownloadMessage:@"All offline downloads deleted"];
+                [self build]; [_table reloadData];
+            }];
+    }
     else if([key isEqual:@"clearcache"]){ [MMSpotify clearSongCache]; [self build]; [_table reloadData]; }
 }
 - (void)close { [[MMRootController shared] popContent]; }

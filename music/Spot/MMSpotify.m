@@ -962,6 +962,24 @@ static void setUnavailable(NSString*tid, BOOL on){
 
 // ---- Offline-Playlists dauerhaft merken (für Auto-Resume) ----
 static NSString *offlinePath(void){ return [diskDir() stringByAppendingPathComponent:@"offline.plist"]; }
++ (BOOL)clearAllDownloads {
+    @synchronized([MMSpotify class]) {
+        if(gDlRunning) return NO;
+        [gDlQueue removeAllObjects]; [gLikedWifiIDs removeAllObjects];
+        gDlDone=0; gDlTotal=0; gDlUnavail=0; [gDlSeen removeAllObjects];
+    }
+    NSString *dir=diskDir(); NSFileManager *fm=[NSFileManager defaultManager];
+    for(NSString *file in [fm contentsOfDirectoryAtPath:dir error:NULL])
+        if([file hasSuffix:@".ogg"]) [fm removeItemAtPath:[dir stringByAppendingPathComponent:file] error:NULL];
+    [fm removeItemAtPath:offlinePath() error:NULL];
+    [fm removeItemAtPath:[dir stringByAppendingPathComponent:@"dlinfo.plist"] error:NULL];
+    NSUserDefaults *ud=[NSUserDefaults standardUserDefaults];
+    for(NSString *key in @[@"manualDownloadIDs",@"likedDailyPendingIDs",@"likedDailyOwnedIDs"])
+        [ud removeObjectForKey:key];
+    [ud synchronize];
+    dispatch_async(dispatch_get_main_queue(), ^{ [[NSNotificationCenter defaultCenter] postNotificationName:@"MMDownloadsChanged" object:nil]; });
+    return YES;
+}
 + (void)markOffline:(NSString *)name trackIds:(NSArray *)trackIds {
     if(!trackIds.count) return;
     @synchronized([MMSpotify class]){

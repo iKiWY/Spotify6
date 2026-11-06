@@ -46,6 +46,7 @@ void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Librar
 + (NSDictionary *)downloadStatus;   // {queue: noch zu ladende IDs (erste = gerade), done, total, eta: Sekunden oder -1}
 + (NSArray *)downloadedTracks;      // @[ {id, bytes, date} ], neueste zuerst
 + (void)deleteDownload:(NSString *)trackId;   // Datei weg + aus den Offline-Listen (kein Auto-Resume)
++ (BOOL)clearAllDownloads;   // alle Offline-Dateien + Auto-Resume-Listen entfernen; NO wenn gerade geladen wird
 + (void)trackInfos:(NSArray *)trackIds completion:(void(^)(NSDictionary *byId))done;   // {id: {title, artist, cover}} übers Netz
 + (BOOL)isDownloading;            // läuft gerade ein Offline-Download?
 + (long long)freeDiskBytes;   // freier Speicher auf dem Gerät
