@@ -70,6 +70,7 @@
                   @{@"kind":@"button",@"title":L(@"Clear song cache"),@"key":@"clearcache"}]},
       @{@"title":L(@"Account"),@"footer":@"",
         @"rows":@[@{@"kind":@"info",@"title":L(@"Logged in to Spotify")},   // der Benutzername ist nur eine Kennung (31xh…), nichts zum Anzeigen
+                  @{@"kind":@"button",@"title":@"Remove all liked songs",@"key":@"clearLikes"},
                   @{@"kind":@"button",@"title":L(@"Log out"),@"key":@"logout",@"primary":@YES}]},
       @{@"title":L(@"Help"),@"footer":L(@"If songs don't play, open this and send a screenshot to the developer."),
         @"rows":@[@{@"kind":@"link",@"title":L(@"Debug info"),@"key":@"diag"}]}];
@@ -227,6 +228,7 @@ static UIImage* chevron(void){
                 [self build]; [_table reloadData];
             }];
     }
+    else if([key isEqual:@"clearLikes"]) [MMSheet showIn:[MMRootController shared].view title:@"Remove all liked songs?" subtitle:@"This removes every song from Liked Songs in your Spotify account. Downloaded files remain on this iPhone." options:@[@"Remove all likes"] done:^(NSInteger i){ if(i!=0) return; [MMSpotify removeAllLikedTracks:^(BOOL ok,NSUInteger removed){ [[MMRootController shared] showDownloadMessage:ok?[NSString stringWithFormat:@"Removed %lu liked songs",(unsigned long)removed]:[NSString stringWithFormat:@"Removed %lu songs; Spotify stopped the request. Try again to continue.",(unsigned long)removed]]; }]; }];
     else if([key isEqual:@"clearcache"]){ [MMSpotify clearSongCache]; [self build]; [_table reloadData]; }
 }
 - (void)close { [[MMRootController shared] popContent]; }

@@ -1744,6 +1744,24 @@ static NSDictionary* spInternalGet(NSString*path,int*st,BOOL*handled){
         dispatch_async(dispatch_get_main_queue(), ^{ if(done) done(ok); });
     });
 }
++ (void)removeAllLikedTracks:(void(^)(BOOL ok, NSUInteger removed))done {
+    dispatch_async(dispatch_get_global_queue(0,0), ^{
+        int st=0; NSArray *ids=spLikedIds(&st); NSString *user=spUser();
+        if(st!=200 || !ids || !user.length){ dispatch_async(dispatch_get_main_queue(), ^{ if(done) done(NO,0); }); return; }
+        NSUInteger removed=0; BOOL ok=YES;
+        for(NSUInteger off=0;off<ids.count;off+=50){
+            NSArray *batch=[ids subarrayWithRange:NSMakeRange(off,MIN((NSUInteger)50,ids.count-off))];
+            NSMutableData *req=[NSMutableData data]; pstr(req,1,user); pstr(req,2,@"collection");
+            for(NSString *tid in batch){ NSMutableData *it=[NSMutableData data]; pstr(it,1,[NSString stringWithFormat:@"spotify:track:%@",tid]); pvarf(it,2,(uint64_t)[[NSDate date] timeIntervalSince1970]); pvarf(it,3,1); pmsg(req,3,it); }
+            CFUUIDRef uu=CFUUIDCreate(NULL); pstr(req,4,[(NSString *)CFBridgingRelease(CFUUIDCreateString(NULL,uu)) lowercaseString]); CFRelease(uu);
+            NSString *ct=@"application/vnd.collection-v2.spotify.proto"; st=0; spReq(@"POST",@"/collection/v2/write",req,ct,ct,&st);
+            if(st<200 || st>=300){ ok=NO; break; }
+            removed+=batch.count;
+            @synchronized([MMSpotify class]){ NSMutableArray *left=[gLiked mutableCopy]?:[ids mutableCopy]; [left removeObjectsInArray:batch]; gLiked=left; gLikedAt=[[NSDate date] timeIntervalSince1970]; }
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{ if(done) done(ok,removed); });
+    });
+}
 + (NSString *)username { return spUser(); }
 + (NSNumber *)likedCached:(NSString *)trackId {   // sofort aus dem Speicher (5 Min gültig), sonst nil
     @synchronized([MMSpotify class]){ if(!gLiked || [[NSDate date] timeIntervalSince1970]-gLikedAt>=300) return nil; return @([gLiked containsObject:trackId]); }

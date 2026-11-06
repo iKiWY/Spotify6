@@ -86,6 +86,7 @@ void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Librar
 + (void)deviceLoginPoll:(NSDictionary *)info cancelled:(BOOL(^)(void))cancelled completion:(void(^)(NSString *token, NSString *error))done;
 // Schreiben ins Konto (interne Server): Lieblingssongs an/aus, Titel ans Ende einer eigenen Playlist hängen.
 + (void)setLiked:(BOOL)on track:(NSString *)trackId completion:(void(^)(BOOL ok))done;
++ (void)removeAllLikedTracks:(void(^)(BOOL ok, NSUInteger removed))done;
 + (NSString *)username;                          // Spotify-Benutzername (für "eigene Playlists")
 + (NSNumber *)likedCached:(NSString *)trackId;    // @YES/@NO sofort, nil = noch nicht bekannt
 + (void)isLiked:(NSString *)trackId completion:(void(^)(BOOL liked, BOOL known))done;   // known=NO: Liste nicht ladbar (offline)
