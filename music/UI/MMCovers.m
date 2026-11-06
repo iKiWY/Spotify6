@@ -5,6 +5,7 @@
 #import <unistd.h>
 #import <sys/stat.h>
 #import <sys/time.h>
+#import <limits.h>
 
 @implementation MMCovers
 
@@ -82,6 +83,22 @@ static void dedupeExisting(void){
     id im=a[idx]; if(![im isKindOfClass:[NSDictionary class]]) im=a[0];
     id u=[im isKindOfClass:[NSDictionary class]]?im[@"url"]:nil;
     return [u isKindOfClass:[NSString class]]?u:@"";
+}
+
++ (NSString *)smallURL:(id)images {
+    if(![images isKindOfClass:[NSArray class]] || ![images count]) return @"";
+    NSDictionary *small=nil; long long smallArea=LLONG_MAX;
+    for(id item in images){
+        if(![item isKindOfClass:[NSDictionary class]]) continue;
+        id width=item[@"width"], height=item[@"height"];
+        long long w=[width respondsToSelector:@selector(longLongValue)]?[width longLongValue]:0;
+        long long h=[height respondsToSelector:@selector(longLongValue)]?[height longLongValue]:0;
+        long long area=(w>0 && h>0)?w*h:LLONG_MAX-1;
+        if(!small || area<smallArea){ small=item; smallArea=area; }
+    }
+    if(!small) small=[images lastObject];
+    id url=small[@"url"];
+    return [url isKindOfClass:[NSString class]]?url:@"";
 }
 
 + (UIImage *)cached:(NSString *)url { return url.length?[gRam() objectForKey:url]:nil; }

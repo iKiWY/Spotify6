@@ -204,7 +204,7 @@ static NSString* fmtDuration(long long ms){
         if([arts isKindOfClass:[NSArray class]] && [arts count]){ id a0=[arts objectAtIndex:0]; if([a0 isKindOfClass:[NSDictionary class]] && [a0[@"name"] isKindOfClass:[NSString class]]) an=a0[@"name"];
             if([a0 isKindOfClass:[NSDictionary class]] && [a0[@"id"] isKindOfClass:[NSString class]]) aid=a0[@"id"]; }
         id alb=t[@"album"]; NSString*cov=@"", *aln=@"";
-        if([alb isKindOfClass:[NSDictionary class]]){ cov=[MMCovers bestURL:alb[@"images"]];   // scharfes (mittleres) Cover
+        if([alb isKindOfClass:[NSDictionary class]]){ cov=[MMCovers smallURL:alb[@"images"]];   // kleines Cover für die schmale Titelliste
             if([alb[@"name"] isKindOfClass:[NSString class]]) aln=alb[@"name"]; }   // Album-Spalte (iPad)
         id dur=t[@"duration_ms"];
         [out addObject:@{@"id":tid,@"title":nm,@"artist":an,@"artistId":aid,@"album":aln,@"cover":cov?:@"",@"dur":[dur isKindOfClass:[NSNumber class]]?dur:@0}];
@@ -333,7 +333,7 @@ enum { kAlertRemove=1, kAlertSave=2 };
                 if(![it isKindOfClass:[NSDictionary class]])continue;
                 id tw=((NSDictionary*)it)[@"track"]; NSDictionary*t=[tw isKindOfClass:[NSDictionary class]]?tw:(NSDictionary*)it;
                 id tid=t[@"id"]; if([tid isKindOfClass:[NSString class]])[out addObject:tid];
-                id alb=t[@"album"]; if([alb isKindOfClass:[NSDictionary class]]){ NSString*cu=[MMCovers bestURL:alb[@"images"]]; if(cu.length)[covs addObject:cu]; }
+                id alb=t[@"album"]; if([alb isKindOfClass:[NSDictionary class]]){ NSString*cu=[MMCovers smallURL:alb[@"images"]]; if(cu.length)[covs addObject:cu]; }
             }
             [self updateDlState];
             if(!out.count) return;

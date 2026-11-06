@@ -94,7 +94,7 @@ static NSString* yearOf(NSDictionary*a){ id y=a[@"release_date"]; return [y isKi
         if(![t isKindOfClass:[NSDictionary class]]||![t[@"id"] isKindOfClass:[NSString class]]) continue;
         NSArray*arts=t[@"artists"]; NSString*an=([arts isKindOfClass:[NSArray class]]&&arts.count)?arts[0][@"name"]:@"";
         NSString*aln=[t[@"album"][@"name"] isKindOfClass:[NSString class]]?t[@"album"][@"name"]:@"";
-        [tr addObject:@{@"id":t[@"id"],@"title":t[@"name"]?:@"",@"artist":an?:@"",@"album":aln,@"cover":[MMCovers bestURL:t[@"album"][@"images"]]?:@""}];
+        [tr addObject:@{@"id":t[@"id"],@"title":t[@"name"]?:@"",@"artist":an?:@"",@"album":aln,@"cover":[MMCovers smallURL:t[@"album"][@"images"]]?:@""}];
     }
     _tracks=tr;
     NSMutableArray*secs=[NSMutableArray array];

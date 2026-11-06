@@ -3,6 +3,7 @@
 // Verhindert, dass dasselbe Cover auf jedem Screen neu aus dem Netz geladen wird.
 @interface MMCovers : NSObject
 + (NSString *)bestURL:(id)images;                                // wählt ein scharfes (mittleres) Cover statt des kleinsten
++ (NSString *)smallURL:(id)images;                               // kleinste verfügbare Spotify-Variante für Navigationslisten
 + (UIImage *)cached:(NSString *)url;                              // sofort aus RAM, sonst nil
 + (void)load:(NSString *)url into:(UIImageView *)iv;             // RAM->Platte->Netz, setzt Bild auf Main
 + (void)load:(NSString *)url completion:(void(^)(UIImage *img))done;

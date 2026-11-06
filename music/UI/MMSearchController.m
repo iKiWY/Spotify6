@@ -146,13 +146,13 @@ static NSArray* items(NSDictionary*j,NSString*k){ id v=[j[k] isKindOfClass:[NSDi
         NSMutableArray*tr=[NSMutableArray array], *ar=[NSMutableArray array], *al=[NSMutableArray array];
         for(NSDictionary*t in items(j,@"tracks")){ if(![t isKindOfClass:[NSDictionary class]]||!str(t[@"id"]).length) continue;
             NSDictionary*alb=[t[@"album"] isKindOfClass:[NSDictionary class]]?t[@"album"]:nil;
-            [tr addObject:@{@"id":t[@"id"],@"title":str(t[@"name"]),@"artist":firstArtist(t),@"cover":[MMCovers bestURL:alb[@"images"]]?:@""}]; }
+            [tr addObject:@{@"id":t[@"id"],@"title":str(t[@"name"]),@"artist":firstArtist(t),@"cover":[MMCovers smallURL:alb[@"images"]]?:@""}]; }
         for(NSDictionary*a in items(j,@"artists")){ if(![a isKindOfClass:[NSDictionary class]]||!str(a[@"id"]).length) continue;
-            [ar addObject:@{@"id":a[@"id"],@"name":str(a[@"name"]),@"cover":[MMCovers bestURL:a[@"images"]]?:@""}]; if(ar.count>=3) break; }
+            [ar addObject:@{@"id":a[@"id"],@"name":str(a[@"name"]),@"cover":[MMCovers smallURL:a[@"images"]]?:@""}]; if(ar.count>=3) break; }
         for(NSDictionary*a in items(j,@"albums")){ if(![a isKindOfClass:[NSDictionary class]]||!str(a[@"id"]).length) continue;
             NSString*yr=str(a[@"release_date"]); if(yr.length>4) yr=[yr substringToIndex:4];
             NSString*sub=yr.length?[NSString stringWithFormat:@"%@ · %@",firstArtist(a),yr]:firstArtist(a);
-            [al addObject:@{@"id":a[@"id"],@"name":str(a[@"name"]),@"sub":sub,@"cover":[MMCovers bestURL:a[@"images"]]?:@""}]; if(al.count>=6) break; }
+            [al addObject:@{@"id":a[@"id"],@"name":str(a[@"name"]),@"sub":sub,@"cover":[MMCovers smallURL:a[@"images"]]?:@""}]; if(al.count>=6) break; }
         _results=tr; _artists=ar; _albums=al;
         NSMutableArray*secs=[NSMutableArray array];
         if(ar.count)[secs addObject:@"artists"];

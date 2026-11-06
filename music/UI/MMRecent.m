@@ -14,7 +14,7 @@ static long long atOf(NSDictionary*d){ id a=d[@"at"]; return [a respondsToSelect
     [all sortWithOptions:NSSortStable usingComparator:^NSComparisonResult(NSDictionary*x,NSDictionary*y){ long long p=atOf(x),q=atOf(y); return p>q?NSOrderedAscending:p<q?NSOrderedDescending:NSOrderedSame; }];
     // Bild: fehlt es beim neuesten Eintrag (älterer Verlauf in der App), das aus einem anderen Eintrag derselben Playlist nehmen
     NSMutableDictionary*img=[NSMutableDictionary dictionary];
-    for(NSDictionary*x in all){ NSString*u=[MMCovers bestURL:x[@"images"]]; if(u.length && !img[x[@"id"]]) img[x[@"id"]]=u; }
+    for(NSDictionary*x in all){ NSString*u=[MMCovers smallURL:x[@"images"]]; if(u.length && !img[x[@"id"]]) img[x[@"id"]]=u; }
     NSMutableArray*out=[NSMutableArray array]; NSMutableSet*seen=[NSMutableSet set];
     for(NSDictionary*x in all){
         if([seen containsObject:x[@"id"]]) continue; [seen addObject:x[@"id"]];
@@ -60,7 +60,7 @@ static long long atOf(NSDictionary*d){ id a=d[@"at"]; return [a respondsToSelect
     if(waiting[artistId]){ [waiting[artistId] addObject:[done copy]]; return; }   // schon unterwegs: nur mitwarten
     waiting[artistId]=[NSMutableArray arrayWithObject:[done copy]];
     [MMSpotify apiUserCached:[@"artists/" stringByAppendingString:artistId] completion:^(NSDictionary*j,NSInteger st,BOOL fresh){
-        NSString*u=[j isKindOfClass:[NSDictionary class]]?[MMCovers bestURL:j[@"images"]]:nil;
+        NSString*u=[j isKindOfClass:[NSDictionary class]]?[MMCovers smallURL:j[@"images"]]:nil;
         if(u.length) mem[artistId]=u;   // nur echte Bilder merken: offline gestartet -> beim nächsten Zeichnen erneut
         NSArray*cbs=waiting[artistId]; if(fresh || u.length) [waiting removeObjectForKey:artistId];
         for(void(^cb)(NSString*) in cbs) cb(u.length?u:nil);

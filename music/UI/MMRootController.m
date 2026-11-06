@@ -691,7 +691,7 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
     [MMSpotify fetchTrack:trackId completion:^(NSDictionary*info,NSString*e){
         if(info && [trackId isEqualToString:_curId]){   // Schutz gegen veraltete Antwort bei schnellem Skippen
             // Cover aus der Liste behalten: Spotify liefert hier oft eine andere Adresse fürs gleiche Bild -> sonst Flackern + doppeltes Laden
-            _curTitle=info[@"title"]?:title; _curArtist=info[@"artist"]?:artist; _curCover=cover.length?cover:(info[@"cover"]?:cover);
+            _curTitle=info[@"title"]?:title; _curArtist=info[@"artist"]?:artist; _curCover=info[@"cover"]?:cover;
             _curAlbumId=info[@"albumId"]; _curAlbum=info[@"album"]; _curArtistId=info[@"artistId"];
             if([info[@"durMs"] doubleValue]>0) [MMAudio setExpectedDuration:[info[@"durMs"] doubleValue]/1000.0];   // Länge, solange der Titel noch lädt
             // Verlauf auf dem iPhone (Spotify erfährt von dieser Wiedergabe nichts) -> Startseite zeigt sie sofort
