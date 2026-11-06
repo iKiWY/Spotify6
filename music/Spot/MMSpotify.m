@@ -916,7 +916,7 @@ static void setUnavailable(NSString*tid, BOOL on){
                 return;
             }
             NSString*cdn=nil; NSData*key=nil; NSString*e=nil;
-            if(![MMSpotify resolveTrack:tid cdn:&cdn key:&key err:&e prefer320:[MMSpotify wifiReachable]]){
+            if(![MMSpotify resolveTrack:tid cdn:&cdn key:&key err:&e prefer320:(wifiOnly && [MMSpotify wifiReachable])]){
                 gDlFails++;
                 slog(@"dl resolve fail #%ld %@ (%@)",(long)gDlFails,tid,e);
                 BOOL keyIssue = (e && [e rangeOfString:@"AudioKey"].location!=NSNotFound) || (e && [e rangeOfString:@"logged in"].location!=NSNotFound);
