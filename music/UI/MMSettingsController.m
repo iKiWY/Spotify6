@@ -64,7 +64,7 @@
                   @{@"kind":@"button",@"title":@"Delete all offline downloads",@"key":@"clearDownloads"},
                   @{@"kind":@"switch",@"title":L(@"Background download"),@"key":@"bg"},
                   @{@"kind":@"switch",@"title":@"Repeat liked songs",@"key":@"likedRepeat"},
-                  @{@"kind":@"link",@"title":@"Daily liked songs limit",@"key":@"likedBudget",@"detail":[NSString stringWithFormat:@"%.0f MB",[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyBudgetMB"]?[[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyBudgetMB"] doubleValue]:512]}]},
+                  @{@"kind":@"link",@"title":@"Daily liked songs limit",@"key":@"likedBudget",@"detail":([[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyBudgetMB"]?[NSString stringWithFormat:@"%.0f MB",[[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyBudgetMB"] doubleValue]]:@"Unlimited")} ]},
       @{@"title":L(@"Song cache"),@"footer":L(@"Recently played songs are kept (up to 500 MB) so they play again without downloading."),
         @"rows":@[@{@"kind":@"info",@"title":L(@"In use"),@"detail":[MMTrackListController fmtBytes:[MMSpotify songCacheBytes]]},
                   @{@"kind":@"button",@"title":L(@"Clear song cache"),@"key":@"clearcache"}]},
@@ -215,7 +215,7 @@ static UIImage* chevron(void){
             [MMRootController switchSkin:sk];   // Oberfläche neu aufbauen, Wiedergabe läuft weiter
         }];
     }
-    else if([key isEqual:@"likedBudget"]) [MMSheet showIn:[MMRootController shared].view title:@"Daily liked songs limit" subtitle:@"Choose the maximum estimated audio space" options:@[@"256 MB",@"512 MB",@"1 GB"] done:^(NSInteger i){ if(i>=0){ double mb=i==0?256.0:i==1?512.0:1024.0; [[NSUserDefaults standardUserDefaults] setDouble:mb forKey:@"likedDailyBudgetMB"]; [[NSUserDefaults standardUserDefaults] synchronize]; [self build]; [_table reloadData]; } }];
+    else if([key isEqual:@"likedBudget"]) [MMSheet showIn:[MMRootController shared].view title:@"Daily liked songs limit" subtitle:@"Choose the maximum estimated audio space" options:@[@"Unlimited",@"256 MB",@"512 MB",@"1 GB"] done:^(NSInteger i){ if(i==0){ [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"likedDailyBudgetMB"]; } else if(i>0){ double mb=i==1?256.0:i==2?512.0:1024.0; [[NSUserDefaults standardUserDefaults] setDouble:mb forKey:@"likedDailyBudgetMB"]; } if(i>=0){ [[NSUserDefaults standardUserDefaults] synchronize]; [self build]; [_table reloadData]; } }];
     else if([key isEqual:@"downloads"]) [[MMRootController shared] pushContent:[[MMDownloadsController alloc] init]];
     else if([key isEqual:@"clearDownloads"]){
         NSArray*files=[MMSpotify downloadedTracks]; long long bytes=0; for(NSDictionary*d in files) bytes+=[d[@"bytes"] longLongValue];
