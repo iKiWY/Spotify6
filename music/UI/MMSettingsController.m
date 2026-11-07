@@ -61,12 +61,16 @@
       @{@"title":L(@"Downloads"),@"footer":L(@"Background download keeps saving offline songs while Spotify6 is in the background."),
         @"rows":@[@{@"kind":@"link",@"title":L(@"Downloaded songs"),@"key":@"downloads",
                     @"detail":LF(@"%lu · %@",(unsigned long)dl.count,[MMTrackListController fmtBytes:dlBytes])},
-                  @{@"kind":@"switch",@"title":L(@"Background download"),@"key":@"bg"}]},
+                  @{@"kind":@"button",@"title":@"Delete all offline downloads",@"key":@"clearDownloads"},
+                  @{@"kind":@"switch",@"title":L(@"Background download"),@"key":@"bg"},
+                  @{@"kind":@"switch",@"title":@"Repeat liked songs",@"key":@"likedRepeat"},
+                  @{@"kind":@"link",@"title":@"Daily liked songs limit",@"key":@"likedBudget",@"detail":([[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyBudgetMB"]?[NSString stringWithFormat:@"%.0f MB",[[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyBudgetMB"] doubleValue]]:@"Unlimited")} ]},
       @{@"title":L(@"Song cache"),@"footer":L(@"Recently played songs are kept (up to 500 MB) so they play again without downloading."),
         @"rows":@[@{@"kind":@"info",@"title":L(@"In use"),@"detail":[MMTrackListController fmtBytes:[MMSpotify songCacheBytes]]},
                   @{@"kind":@"button",@"title":L(@"Clear song cache"),@"key":@"clearcache"}]},
       @{@"title":L(@"Account"),@"footer":@"",
         @"rows":@[@{@"kind":@"info",@"title":L(@"Logged in to Spotify")},   // der Benutzername ist nur eine Kennung (31xh…), nichts zum Anzeigen
+                  @{@"kind":@"button",@"title":@"Remove all liked songs",@"key":@"clearLikes"},
                   @{@"kind":@"button",@"title":L(@"Log out"),@"key":@"logout",@"primary":@YES}]},
       @{@"title":L(@"Help"),@"footer":L(@"If songs don't play, open this and send a screenshot to the developer."),
         @"rows":@[@{@"kind":@"link",@"title":L(@"Debug info"),@"key":@"diag"}]}];
@@ -83,13 +87,15 @@
 }
 - (BOOL)valueFor:(NSString *)key {
     if([key isEqual:@"bg"]) return [MMKeepAlive enabled];
+    if([key isEqual:@"likedRepeat"]) return [[NSUserDefaults standardUserDefaults] boolForKey:@"likedDailyRepeat"] ;
     if([key isEqual:@"cflow"]) return [MMRootController coverFlowOnRotate];
     if([key isEqual:@"ncw"]){ id v=[[NSUserDefaults standardUserDefaults] objectForKey:@"ncWidget"]; return v?[v boolValue]:YES; }   // liest das Widget in SpringBoard
     return [MMTrackListController coverStyle];
 }
 - (void)switched:(UISwitch *)sw {
-    NSString*key=@[@"bg",@"cflow",@"cover",@"ncw"][sw.tag];
+    NSString*key=sw.accessibilityIdentifier ?: @[@"bg",@"cflow",@"cover",@"ncw"][sw.tag];
     if([key isEqual:@"bg"]) [MMKeepAlive setEnabled:sw.on];
+    else if([key isEqual:@"likedRepeat"]){ [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:@"likedDailyRepeat"]; [[NSUserDefaults standardUserDefaults] synchronize]; }
     else if([key isEqual:@"ncw"]){ [[NSUserDefaults standardUserDefaults] setBool:sw.on forKey:@"ncWidget"]; [[NSUserDefaults standardUserDefaults] synchronize]; }
     else if([key isEqual:@"cflow"]) [MMRootController setCoverFlowOnRotate:sw.on];
     else [MMTrackListController setCoverStyle:sw.on];   // gilt ab dem nächsten Öffnen einer Liste
@@ -112,7 +118,7 @@
     c.textLabel.adjustsFontSizeToFitWidth=YES; c.textLabel.minimumFontSize=12;   // lange Namen neben dem Schalter verkleinern statt abschneiden
     if([kind isEqual:@"switch"]){
         UISwitch*sw=[[UISwitch alloc] init]; sw.onTintColor=[SpotTheme green]; sw.on=[self valueFor:r[@"key"]];
-        sw.tag=[@[@"bg",@"cflow",@"cover",@"ncw"] indexOfObject:r[@"key"]];
+        sw.tag=[@[@"bg",@"cflow",@"cover",@"ncw"] indexOfObject:r[@"key"]]; sw.accessibilityIdentifier=r[@"key"];
         [sw addTarget:self action:@selector(switched:) forControlEvents:UIControlEventValueChanged]; c.accessoryView=sw;
     } else if([kind isEqual:@"link"]){ c.accessoryType=UITableViewCellAccessoryDisclosureIndicator; c.selectionStyle=UITableViewCellSelectionStyleGray; }
     else if([kind isEqual:@"button"]){   // Knopf-Zeile: Text mittig; Abmelden rot
@@ -175,7 +181,7 @@ static UIImage* chevron(void){
     CGFloat right=W-16;
     if([kind isEqual:@"switch"]){
         UISwitch*sw=[[UISwitch alloc] init]; sw.onTintColor=[SpotTheme green]; sw.on=[self valueFor:r[@"key"]];
-        sw.tag=[@[@"bg",@"cflow",@"cover",@"ncw"] indexOfObject:r[@"key"]];
+        sw.tag=[@[@"bg",@"cflow",@"cover",@"ncw"] indexOfObject:r[@"key"]]; sw.accessibilityIdentifier=r[@"key"];
         sw.frame=CGRectMake(right-sw.frame.size.width,(54-sw.frame.size.height)/2,sw.frame.size.width,sw.frame.size.height);
         [sw addTarget:self action:@selector(switched:) forControlEvents:UIControlEventValueChanged]; [c.contentView addSubview:sw];
     } else if([kind isEqual:@"link"]){
@@ -209,7 +215,20 @@ static UIImage* chevron(void){
             [MMRootController switchSkin:sk];   // Oberfläche neu aufbauen, Wiedergabe läuft weiter
         }];
     }
+    else if([key isEqual:@"likedBudget"]) [MMSheet showIn:[MMRootController shared].view title:@"Daily liked songs limit" subtitle:@"Choose the maximum estimated audio space" options:@[@"Unlimited",@"256 MB",@"512 MB",@"1 GB"] done:^(NSInteger i){ if(i==0){ [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"likedDailyBudgetMB"]; } else if(i>0){ double mb=i==1?256.0:i==2?512.0:1024.0; [[NSUserDefaults standardUserDefaults] setDouble:mb forKey:@"likedDailyBudgetMB"]; } if(i>=0){ [[NSUserDefaults standardUserDefaults] synchronize]; [self build]; [_table reloadData]; } }];
     else if([key isEqual:@"downloads"]) [[MMRootController shared] pushContent:[[MMDownloadsController alloc] init]];
+    else if([key isEqual:@"clearDownloads"]){
+        NSArray*files=[MMSpotify downloadedTracks]; long long bytes=0; for(NSDictionary*d in files) bytes+=[d[@"bytes"] longLongValue];
+        [MMSheet showIn:[MMRootController shared].view title:@"Delete all offline downloads?"
+            subtitle:[NSString stringWithFormat:@"Delete %lu songs (%@) from this iPhone? Your Spotify likes and library will stay intact.",(unsigned long)files.count,[MMTrackListController fmtBytes:bytes]]
+            options:@[@"Delete all downloads"] done:^(NSInteger i){
+                if(i!=0) return;
+                if(![MMSpotify clearAllDownloads]){ [[MMRootController shared] showDownloadMessage:@"Wait for the current download to finish, then try again."]; return; }
+                [[MMRootController shared] showDownloadMessage:@"All offline downloads deleted"];
+                [self build]; [_table reloadData];
+            }];
+    }
+    else if([key isEqual:@"clearLikes"]) [MMSheet showIn:[MMRootController shared].view title:@"Remove all liked songs?" subtitle:@"This removes every song from Liked Songs in your Spotify account. Downloaded files remain on this iPhone." options:@[@"Remove all likes"] done:^(NSInteger i){ if(i!=0) return; [MMSpotify removeAllLikedTracks:^(BOOL ok,NSUInteger removed){ [[MMRootController shared] showDownloadMessage:ok?[NSString stringWithFormat:@"Removed %lu liked songs",(unsigned long)removed]:[NSString stringWithFormat:@"Removed %lu songs; Spotify stopped the request. Try again to continue.",(unsigned long)removed]]; }]; }];
     else if([key isEqual:@"clearcache"]){ [MMSpotify clearSongCache]; [self build]; [_table reloadData]; }
 }
 - (void)close { [[MMRootController shared] popContent]; }

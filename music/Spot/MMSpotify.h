@@ -19,6 +19,7 @@ void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Librar
 // Netz: ist eine Verbindung da? Beobachtet Änderungen und meldet "MMNetworkChanged" (userInfo reachable=@BOOL).
 // Kommt das Netz zurück, verbindet sich die Wiedergabe-Session von selbst neu.
 + (BOOL)networkReachable;
++ (BOOL)wifiReachable;
 + (void)startNetworkWatch;
 // Auto-Login mit gespeicherten Zugangsdaten (kein Passwort/Browser nötig).
 + (void)loginStoredWithCompletion:(void(^)(BOOL ok, NSString *username, NSString *error))done;
@@ -36,6 +37,7 @@ void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Librar
 // Reiht Tracks in die globale Download-Warteschlange ein (mehrere Playlists nacheinander).
 // Status per Notification: MMDownloadProgress {done,total} · MMDownloadDone {ok} · MMDownloadFull
 + (void)queueDownloadTracks:(NSArray *)trackIds;
++ (void)queueLikedDailyTracks:(NSArray *)trackIds;
 + (void)removeDownloads:(NSArray *)trackIds;
 // Offline-Playlists dauerhaft merken -> beim Start werden fehlende Tracks automatisch weitergeladen.
 + (void)markOffline:(NSString *)name trackIds:(NSArray *)trackIds;
@@ -44,6 +46,7 @@ void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Librar
 + (NSDictionary *)downloadStatus;   // {queue: noch zu ladende IDs (erste = gerade), done, total, eta: Sekunden oder -1}
 + (NSArray *)downloadedTracks;      // @[ {id, bytes, date} ], neueste zuerst
 + (void)deleteDownload:(NSString *)trackId;   // Datei weg + aus den Offline-Listen (kein Auto-Resume)
++ (BOOL)clearAllDownloads;   // alle Offline-Dateien + Auto-Resume-Listen entfernen; NO wenn gerade geladen wird
 + (void)trackInfos:(NSArray *)trackIds completion:(void(^)(NSDictionary *byId))done;   // {id: {title, artist, cover}} übers Netz
 + (BOOL)isDownloading;            // läuft gerade ein Offline-Download?
 + (long long)freeDiskBytes;   // freier Speicher auf dem Gerät
@@ -83,6 +86,7 @@ void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Librar
 + (void)deviceLoginPoll:(NSDictionary *)info cancelled:(BOOL(^)(void))cancelled completion:(void(^)(NSString *token, NSString *error))done;
 // Schreiben ins Konto (interne Server): Lieblingssongs an/aus, Titel ans Ende einer eigenen Playlist hängen.
 + (void)setLiked:(BOOL)on track:(NSString *)trackId completion:(void(^)(BOOL ok))done;
++ (void)removeAllLikedTracks:(void(^)(BOOL ok, NSUInteger removed))done;
 + (NSString *)username;                          // Spotify-Benutzername (für "eigene Playlists")
 + (NSNumber *)likedCached:(NSString *)trackId;    // @YES/@NO sofort, nil = noch nicht bekannt
 + (void)isLiked:(NSString *)trackId completion:(void(^)(BOOL liked, BOOL known))done;   // known=NO: Liste nicht ladbar (offline)

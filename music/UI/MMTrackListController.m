@@ -3,6 +3,7 @@
 #import "MMLayout.h"
 #import "MMArtistController.h"
 #import <objc/runtime.h>
+#import <limits.h>
 static char kRowKey;   // Zeilennummer am Artist-Label (Album-Seite)
 #import "MMSpotify.h"
 #import "MMRootController.h"
@@ -61,6 +62,7 @@ static char kRowKey;   // Zeilennummer am Artist-Label (Album-Seite)
     _offBtn=[UIButton buttonWithType:UIButtonTypeCustom]; _offBtn.frame=CGRectMake(W-52,8,44,34);
     _offBtn.hidden=YES; [self.view addSubview:_offBtn];
     if([self isDownloads]){ [_offBtn setImage:shuffleIcon() forState:UIControlStateNormal]; [_offBtn addTarget:self action:@selector(shufflePlay) forControlEvents:UIControlEventTouchUpInside]; }   // "Heruntergeladen": Zufallswiedergabe statt Download
+    else if([_path hasPrefix:@"me/tracks"]){ [_offBtn setTitle:@"↻" forState:UIControlStateNormal]; [_offBtn setTitleColor:_grn forState:UIControlStateNormal]; _offBtn.titleLabel.font=[UIFont boldSystemFontOfSize:24]; [_offBtn addTarget:self action:@selector(renewLiked) forControlEvents:UIControlEventTouchUpInside]; }
     else [_offBtn addTarget:self action:@selector(toggleDownload) forControlEvents:UIControlEventTouchUpInside];
     _offSpin=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
     _offSpin.center=_offBtn.center; _offSpin.hidesWhenStopped=YES; [self.view addSubview:_offSpin];
@@ -313,7 +315,46 @@ static UIImage* offIcon(BOOL have, UIColor*grn){
     if(!_tracks.count){ _offBtn.hidden=YES; return; }
     _offBtn.hidden=NO; _offBtn.enabled=YES;
     NSArray*ids=_allIds?:[_tracks valueForKey:@"id"];   // _allIds = vollständig (nach letzter Seite)
-    [_offBtn setImage:offIcon(_allIds && [MMSpotify allDownloaded:ids],_grn) forState:UIControlStateNormal];
+    if([_path hasPrefix:@"me/tracks"]) { [_offBtn setImage:nil forState:UIControlStateNormal]; [_offBtn setTitle:@"↻" forState:UIControlStateNormal]; }
+    else [_offBtn setImage:offIcon(_allIds && [MMSpotify allDownloaded:ids],_grn) forState:UIControlStateNormal];
+}
+- (void)renewLiked {
+    if(![_path hasPrefix:@"me/tracks"]) return;
+    if(_loadingPage) { [[[UIAlertView alloc] initWithTitle:@"Curtidas carregando" message:@"Espere a lista de músicas terminar de carregar e toque na seta novamente." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show]; return; }
+    if(![MMSpotify wifiReachable]) { [[[UIAlertView alloc] initWithTitle:@"Wi‑Fi necessário" message:@"Conecte-se ao Wi‑Fi para renovar a seleção offline." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show]; return; }
+    if([MMSpotify isDownloading]) { [[[UIAlertView alloc] initWithTitle:@"Downloads em andamento" message:@"Espere a fila atual terminar antes de renovar a seleção diária." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show]; return; }
+    _offBtn.hidden=YES; [_offSpin startAnimating];
+    [MMSpotify apiUserAllItems:_path completion:^(NSArray*items,NSInteger status){
+        if([MMSpotify isDownloading]) { [_offSpin stopAnimating]; _offBtn.hidden=NO; [[[UIAlertView alloc] initWithTitle:@"Downloads em andamento" message:@"A fila mudou enquanto as curtidas eram carregadas. Tente de novo quando terminar." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show]; return; }
+        if(status<200 || status>=300){ [_offSpin stopAnimating]; _offBtn.hidden=NO; [[[UIAlertView alloc] initWithTitle:@"Não foi possível renovar" message:@"Confira sua conexão e tente novamente." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show]; return; }
+        NSMutableArray*pool=[NSMutableArray array];
+        for(id item in items){ if(![item isKindOfClass:[NSDictionary class]]) continue; id t=item[@"track"]; if(![t isKindOfClass:[NSDictionary class]]) t=item;
+            NSString*tid=[t[@"id"] isKindOfClass:[NSString class]]?t[@"id"]:nil; if(!tid.length) continue;
+            long long ms=[t[@"duration_ms"] longLongValue]; [pool addObject:@{@"id":tid,@"dur":@(ms)}]; }
+        if(!pool.count){ [_offSpin stopAnimating]; _offBtn.hidden=NO; [[[UIAlertView alloc] initWithTitle:@"Nenhuma música encontrada" message:@"Não encontrei músicas curtidas para colocar na seleção." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show]; return; }
+        BOOL allow=[[NSUserDefaults standardUserDefaults] boolForKey:@"likedDailyRepeat"];
+        NSMutableArray*history=[NSMutableArray arrayWithArray:[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyHistory"]?:@[]];
+        NSMutableSet*recent=[NSMutableSet set]; if(!allow) for(id a in history) if([a isKindOfClass:[NSArray class]]) [recent addObjectsFromArray:a];
+        for(NSInteger i=(NSInteger)pool.count-1;i>0;i--){ NSInteger j=arc4random_uniform((uint32_t)i+1); [pool exchangeObjectAtIndex:i withObjectAtIndex:j]; }
+        id budgetValue=[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyBudgetMB"]; long long budget=budgetValue?(long long)([budgetValue doubleValue]*1024*1024):LLONG_MAX;
+        NSMutableArray*chosen=[NSMutableArray array]; long long bytes=0; NSArray*have=[MMSpotify downloadedTracks]; NSMutableDictionary*downloaded=[NSMutableDictionary dictionary]; for(NSDictionary*d in have) downloaded[d[@"id"]]=d[@"bytes"]?:@0;
+        // Budget applies only to the newly selected set; existing downloads use their actual file sizes.
+        NSMutableArray*candidates=[NSMutableArray array];
+        for(NSDictionary*t in pool) if(allow || ![recent containsObject:t[@"id"]]) [candidates addObject:t];
+        // Se acabaram as faixas inéditas, libera as mais antigas pela ordem embaralhada para não gerar seleção vazia.
+        if(!allow && candidates.count<pool.count) {
+            NSMutableArray*older=[NSMutableArray array];
+            for(NSDictionary*t in pool) if([recent containsObject:t[@"id"]]) [older addObject:t];
+            for(NSInteger i=(NSInteger)older.count-1;i>0;i--){ NSInteger j=arc4random_uniform((uint32_t)i+1); [older exchangeObjectAtIndex:i withObjectAtIndex:j]; }
+            [candidates addObjectsFromArray:older];
+        }
+        for(NSDictionary*t in candidates){ NSString*tid=t[@"id"]; long long estimate=downloaded[tid]?[downloaded[tid] longLongValue]:MAX(1,[t[@"dur"] longLongValue])*320/8; if(budget!=LLONG_MAX && (estimate>budget || bytes>budget-estimate)) continue; [chosen addObject:tid]; if(bytes<=LLONG_MAX-estimate) bytes+=estimate; else bytes=LLONG_MAX; }
+        if(!chosen.count){ [_offSpin stopAnimating]; _offBtn.hidden=NO; [[[UIAlertView alloc] initWithTitle:@"Limite diário" message:@"O limite de espaço atual não comporta nenhuma música. Aumente o limite em Configurações → Downloads." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show]; return; }
+        NSMutableArray*newHist=[NSMutableArray arrayWithObject:chosen]; [newHist addObjectsFromArray:history]; while(newHist.count>7) [newHist removeLastObject]; [[NSUserDefaults standardUserDefaults] setObject:newHist forKey:@"likedDailyHistory"];
+        [MMSpotify queueLikedDailyTracks:chosen]; [_offSpin stopAnimating]; _offBtn.hidden=NO;
+        NSString*msg=[NSString stringWithFormat:@"%lu músicas · %@ estimados",(unsigned long)chosen.count,[MMTrackListController fmtBytes:bytes]];
+        [[[UIAlertView alloc] initWithTitle:@"Seleção offline" message:msg delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show];
+    }];
 }
 enum { kAlertRemove=1, kAlertSave=2 };
 - (void)toggleDownload {
