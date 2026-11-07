@@ -2,7 +2,6 @@
 
 @interface MMLastFM : NSObject
 + (BOOL)hasAppCredentials;
-+ (BOOL)hasAppCredentials;
 + (BOOL)isConnected;
 + (NSString *)connectedUsername;
 + (NSString *)configuredAPIKey;
