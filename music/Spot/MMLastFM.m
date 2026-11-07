@@ -133,7 +133,7 @@ static BOOL lfTemporaryError(NSDictionary *j) {
     NSMutableDictionary *item=[@{@"track":title,@"artist":artist,@"timestamp":[NSString stringWithFormat:@"%lld",timestamp]} mutableCopy];
     if(album.length)item[@"album"]=album; if(duration>0)item[@"duration"]=[NSString stringWithFormat:@"%.0f",duration];
     dispatch_async(lfQueue(), ^{
-        NSMutableArray *queue=lfPending(); [queue addObject:item]; if(queue.count>1000)[queue removeObjectsInRange:NSMakeRange(0,queue.count-1000)]; lfSavePending(queue);
+        NSMutableArray *queue=lfPending(); [queue addObject:item]; lfSavePending(queue);
         [self flushOnQueue];
     });
 }
