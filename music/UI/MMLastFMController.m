@@ -13,6 +13,7 @@
     UILabel *_status, *_connected;
     UIButton *_connect, *_copyAuth, *_finish, *_disconnect;
     NSString *_authorizationURL;
+    NSTimer *_authTimer;
     CGFloat _W, _y;
 }
 - (UILabel *)label:(NSString *)text y:(CGFloat)y font:(UIFont *)font color:(UIColor *)color height:(CGFloat)height {
@@ -43,20 +44,26 @@
     _scroll=[[UIScrollView alloc] initWithFrame:CGRectMake(0,46,_W,H-46)]; _scroll.alwaysBounceVertical=YES; _scroll.autoresizingMask=UIViewAutoresizingFlexibleHeight; [self.view addSubview:_scroll];
     _y=12; [self label:@"Spotify6 plays music itself, so the Spotify-to-Last.fm link cannot see it. Connect Last.fm here to scrobble from this player." y:_y font:[SpotTheme sub] color:[SpotTheme muted] height:54]; _y+=62;
     _connected=[self label:@"" y:_y font:[UIFont boldSystemFontOfSize:14] color:[SpotTheme green] height:22]; _y+=30;
-    [self label:@"Last.fm API credentials" y:_y font:[UIFont boldSystemFontOfSize:14] color:[SpotTheme ink] height:20]; _y+=24;
-    UILabel *help=[self label:@"Create a Last.fm API account at last.fm/api/account/create, then paste its API key and secret below. These are app credentials, not your Last.fm password." y:_y font:[SpotTheme sub] color:[SpotTheme muted] height:54]; (void)help; _y+=60;
-    _key=[self field:@"API key (32 characters)" secret:NO y:_y]; _y+=50;
-    _secret=[self field:@"API shared secret" secret:YES y:_y]; _y+=54;
+    if([MMLastFM hasAppCredentials]){
+        _y+=4;
+        [self label:@"Use the button below, then approve Spotify6 in your Last.fm account. This screen will detect the approval automatically." y:_y font:[SpotTheme sub] color:[SpotTheme muted] height:48]; _y+=56;
+    } else {
+        [self label:@"Last.fm API credentials" y:_y font:[UIFont boldSystemFontOfSize:14] color:[SpotTheme ink] height:20]; _y+=24;
+        [self label:@"Create a Last.fm API account at last.fm/api/account/create, then paste its API key and secret below." y:_y font:[SpotTheme sub] color:[SpotTheme muted] height:54]; _y+=60;
+        _key=[self field:@"API key (32 characters)" secret:NO y:_y]; _y+=50;
+        _secret=[self field:@"API shared secret" secret:YES y:_y]; _y+=54;
+    }
     _connect=[self button:@"AUTHORIZE LAST.FM" y:_y action:@selector(connect)]; _y+=54;
     _copyAuth=[self button:@"COPY AUTHORIZATION LINK" y:_y action:@selector(copyAuthorizationLink)]; _y+=54;
-    _finish=[self button:@"I APPROVED — FINISH SETUP" y:_y action:@selector(finishAuthorization)]; _y+=54;
+    _finish=[self button:@"CHECK AUTHORIZATION" y:_y action:@selector(finishAuthorization)]; _y+=54;
     _disconnect=[self button:@"DISCONNECT LAST.FM" y:_y action:@selector(disconnect)]; _y+=54;
     _status=[self label:@"" y:_y font:[SpotTheme sub] color:[SpotTheme muted] height:58]; _y+=64;
     _scroll.contentSize=CGSizeMake(_W,_y+20); [self refreshState];
     UITapGestureRecognizer *tap=[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(hideKeyboard)]; tap.cancelsTouchesInView=NO; [_scroll addGestureRecognizer:tap];
     MMAutoMask(self.view);
 }
-- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self refreshState]; }
+- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self refreshState]; if(_authorizationURL.length && ![MMLastFM isConnected]) [self startAuthorizationPolling]; }
+- (void)viewWillDisappear:(BOOL)animated { [super viewWillDisappear:animated]; [_authTimer invalidate]; _authTimer=nil; }
 - (void)refreshState {
     _key.text=[MMLastFM configuredAPIKey]; _secret.text=[MMLastFM configuredAPISecret];
     _authorizationURL=[MMLastFM pendingAuthorizationURL];
@@ -79,8 +86,9 @@ MM_IOS6_END
         if(!url.length){ self->_status.textColor=[SpotTheme muted]; self->_status.text=error?:@"Could not contact Last.fm."; return; }
         self->_authorizationURL=url; self->_finish.hidden=NO; self->_status.textColor=[SpotTheme green];
         self->_copyAuth.hidden=NO;
-        self->_status.text=@"Approve Spotify6 in Last.fm, then return here and tap “I approved”. If Safari on iOS 6 cannot open the page, copy the link and approve it on another device.";
+        self->_status.text=@"Approve Spotify6 in Last.fm. This screen will connect automatically; you can authorize from another device using the copied link.";
         NSURL *u=[NSURL URLWithString:url]; if(u && [[UIApplication sharedApplication] canOpenURL:u]) [[UIApplication sharedApplication] openURL:u];
+        [self startAuthorizationPolling];
     }];
 }
 - (void)copyAuthorizationLink {
@@ -96,11 +104,21 @@ MM_IOS6_END
         else { self->_status.textColor=[SpotTheme muted]; self->_status.text=error?:@"Authorization failed."; }
     }];
 }
+- (void)startAuthorizationPolling {
+    if(_authTimer || [MMLastFM isConnected]) return;
+    _authTimer=[NSTimer scheduledTimerWithTimeInterval:8 target:self selector:@selector(pollAuthorization) userInfo:nil repeats:YES];
+}
+- (void)pollAuthorization {
+    if([MMLastFM isConnected]){ [_authTimer invalidate]; _authTimer=nil; [self refreshState]; return; }
+    [MMLastFM completeAuthorization:^(BOOL ok,NSString *username,NSString *error){
+        if(ok){ [self->_authTimer invalidate]; self->_authTimer=nil; self->_status.textColor=[SpotTheme green]; self->_status.text=[NSString stringWithFormat:@"Connected as %@. New plays will scrobble when they qualify.",username]; [self refreshState]; [MMLastFM flushQueuedScrobbles]; }
+    }];
+}
 - (void)disconnect {
     UIAlertView *a=[[UIAlertView alloc] initWithTitle:@"Disconnect Last.fm?" message:@"Queued scrobbles will be removed from this device." delegate:self cancelButtonTitle:@"Cancel" otherButtonTitles:@"Disconnect",nil]; a.tag=77; [a show];
 }
 - (void)alertView:(UIAlertView *)alertView clickedButtonAtIndex:(NSInteger)buttonIndex {
     if(alertView.tag==77 && buttonIndex==1){ [MMLastFM disconnect]; _status.text=@"Last.fm disconnected."; [self refreshState]; }
 }
-- (void)close { [self hideKeyboard]; [[MMRootController shared] popContent]; }
+- (void)close { [_authTimer invalidate]; _authTimer=nil; [self hideKeyboard]; [[MMRootController shared] popContent]; }
 @end
