@@ -2,6 +2,13 @@
 #import "MMSpotify.h"
 #import <mbedtls/md5.h>
 
+#if __has_include("MMLastFMAppConfig.local.h")
+#import "MMLastFMAppConfig.local.h"
+#else
+#define MMLASTFM_API_KEY @""
+#define MMLASTFM_API_SECRET @""
+#endif
+
 static NSString * const kLFKey = @"lastFmAPIKey";
 static NSString * const kLFSec = @"lastFmAPISecret";
 static NSString * const kLFSession = @"lastFmSessionKey";
@@ -46,7 +53,8 @@ static NSString *lfFormBody(NSDictionary *params) {
 }
 static NSDictionary *lfCall(NSDictionary *params, NSInteger *httpStatus) {
     NSMutableDictionary *p=[params mutableCopy];
-    NSUserDefaults *ud=[NSUserDefaults standardUserDefaults]; NSString *key=[ud stringForKey:kLFKey]?:@"", *secret=[ud stringForKey:kLFSec]?:@"";
+    NSUserDefaults *ud=[NSUserDefaults standardUserDefaults]; NSString *key=[MMLASTFM_API_KEY length]?MMLASTFM_API_KEY:([ud stringForKey:kLFKey]?:@"");
+    NSString *secret=[MMLASTFM_API_SECRET length]?MMLASTFM_API_SECRET:([ud stringForKey:kLFSec]?:@"");
     p[@"api_key"]=key; p[@"format"]=@"json"; p[@"api_sig"]=lfSignature(p,secret);
     NSInteger st=0; NSDictionary *json=[MMSpotify lastFMPost:lfFormBody(p) status:&st];
     if(httpStatus) *httpStatus=st;
@@ -64,12 +72,13 @@ static BOOL lfTemporaryError(NSDictionary *j) {
 }
 
 @implementation MMLastFM
++ (BOOL)hasAppCredentials { return [MMLASTFM_API_KEY length]==32 && [MMLASTFM_API_SECRET length]>0; }
 + (BOOL)isConnected { return [[NSUserDefaults standardUserDefaults] stringForKey:kLFSession].length>0; }
 + (NSString *)connectedUsername { return [[NSUserDefaults standardUserDefaults] stringForKey:kLFUser]?:@""; }
-+ (NSString *)configuredAPIKey { return [[NSUserDefaults standardUserDefaults] stringForKey:kLFKey]?:@""; }
-+ (NSString *)configuredAPISecret { return [[NSUserDefaults standardUserDefaults] stringForKey:kLFSec]?:@""; }
++ (NSString *)configuredAPIKey { return [MMLASTFM_API_KEY length]?MMLASTFM_API_KEY:([[NSUserDefaults standardUserDefaults] stringForKey:kLFKey]?:@""); }
++ (NSString *)configuredAPISecret { return [MMLASTFM_API_SECRET length]?MMLASTFM_API_SECRET:([[NSUserDefaults standardUserDefaults] stringForKey:kLFSec]?:@""); }
 + (NSString *)pendingAuthorizationURL {
-    NSUserDefaults *ud=[NSUserDefaults standardUserDefaults]; NSString *token=[ud stringForKey:kLFToken]?:@"", *key=[ud stringForKey:kLFKey]?:@"";
+    NSUserDefaults *ud=[NSUserDefaults standardUserDefaults]; NSString *token=[ud stringForKey:kLFToken]?:@"", *key=[self configuredAPIKey]?:@"";
     if(!token.length||!key.length)return nil;
     return [NSString stringWithFormat:@"https://www.last.fm/api/auth/?api_key=%@&token=%@",lfFormValue(key),lfFormValue(token)];
 }
@@ -77,7 +86,10 @@ static BOOL lfTemporaryError(NSDictionary *j) {
 + (void)beginAuthorizationWithAPIKey:(NSString *)apiKey secret:(NSString *)secret completion:(void (^)(NSString *, NSString *))done {
     NSString *key=[[apiKey stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] copy];
     NSString *sec=[[secret stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] copy];
-    NSUserDefaults *ud=[NSUserDefaults standardUserDefaults]; [ud setObject:key?:@"" forKey:kLFKey]; [ud setObject:sec?:@"" forKey:kLFSec];
+    BOOL embedded=[self hasAppCredentials];
+    if(embedded){ key=MMLASTFM_API_KEY; sec=MMLASTFM_API_SECRET; }
+    NSUserDefaults *ud=[NSUserDefaults standardUserDefaults];
+    if(!embedded){ [ud setObject:key?:@"" forKey:kLFKey]; [ud setObject:sec?:@"" forKey:kLFSec]; }
     [ud removeObjectForKey:kLFSession]; [ud removeObjectForKey:kLFUser]; [ud synchronize];
     dispatch_async(lfQueue(), ^{
         if(key.length!=32||sec.length<1){ dispatch_async(dispatch_get_main_queue(), ^{ done(nil,@"Enter the 32-character Last.fm API key and its secret."); }); return; }
