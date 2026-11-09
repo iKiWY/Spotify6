@@ -10,6 +10,8 @@
 #import "MMDownloadsController.h"
 #import "MMDiagnosticsController.h"
 #import "MMSheet.h"
+#import "MMLastFMController.h"
+#import "MMLastFM.h"
 
 @interface MMSettingsController () <UITableViewDataSource, UITableViewDelegate>
 @end
@@ -65,6 +67,8 @@
       @{@"title":L(@"Song cache"),@"footer":L(@"Recently played songs are kept (up to 500 MB) so they play again without downloading."),
         @"rows":@[@{@"kind":@"info",@"title":L(@"In use"),@"detail":[MMTrackListController fmtBytes:[MMSpotify songCacheBytes]]},
                   @{@"kind":@"button",@"title":L(@"Clear song cache"),@"key":@"clearcache"}]},
+      @{@"title":@"Scrobbling",@"footer":@"Send qualifying Spotify6 plays to your Last.fm profile.",
+        @"rows":@[@{@"kind":@"link",@"title":@"Last.fm",@"key":@"lastfm",@"detail":[MMLastFM isConnected]?@"Connected":@"Set up"}]},
       @{@"title":L(@"Account"),@"footer":@"",
         @"rows":@[@{@"kind":@"info",@"title":L(@"Logged in to Spotify")},   // der Benutzername ist nur eine Kennung (31xh…), nichts zum Anzeigen
                   @{@"kind":@"button",@"title":L(@"Log out"),@"key":@"logout",@"primary":@YES}]},
@@ -202,6 +206,7 @@ static UIImage* chevron(void){
         [[MMRootController shared] pushContent:k];
     } else if([key isEqual:@"logout"]) [MMRootController confirmLogout];
     else if([key isEqual:@"diag"]) [[MMRootController shared] pushContent:[[MMDiagnosticsController alloc] init]];
+    else if([key isEqual:@"lastfm"]) [[MMRootController shared] pushContent:[[MMLastFMController alloc] init]];
     else if([key isEqual:@"skin"]){   // Farben und Leisten werden beim Aufbau gelesen: die Oberfläche wird neu gebaut
         [MMSheet showIn:[MMRootController shared].view title:L(@"Skin") subtitle:nil
                 options:@[@"Spotify",@"Classic iOS"] done:^(NSInteger i){

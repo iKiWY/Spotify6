@@ -1088,7 +1088,7 @@ static NSInteger gPlayDownloads=0; static NSString*gStreamingId=nil, *gDeferredP
 // Für "Fehlerinfos": nur die aussagekräftigen Zeilen, Download-Adressen ohne Schlüssel
 + (NSString *)diagnosticLog {
     NSString*all=[NSString stringWithContentsOfFile:MMPath(@".spotify-log") encoding:NSUTF8StringEncoding error:NULL]?:@"";   // Datei wird bei jeder Zeile neu geschrieben
-    NSArray*keys=@[@"=== login",@"tls:",@"apresolve",@"ap ",@"handshake",@"no reply",@"Login",@"AuthFailure",@"reconnect",@"account type",@"country",@"resolve",@"AesKeyError",@"AudioKey",@"cdn",@"CDN",@"playTrack",@"fail",@"timeout",@"Unexpected",@"not reachable",@"dl ",@"test:"];
+    NSArray*keys=@[@"=== login",@"tls:",@"apresolve",@"ap ",@"handshake",@"no reply",@"Login",@"AuthFailure",@"reconnect",@"account type",@"country",@"resolve",@"AesKeyError",@"AudioKey",@"cdn",@"CDN",@"playTrack",@"fail",@"timeout",@"Unexpected",@"not reachable",@"dl ",@"test:",@"Last.fm"];
     NSMutableArray*out=[NSMutableArray array];
     NSRegularExpression*url=[NSRegularExpression regularExpressionWithPattern:@"(https?://[^/\\s]+)\\S*" options:0 error:NULL];
     for(NSString*l in [all componentsSeparatedByString:@"\n"]){
@@ -1104,6 +1104,15 @@ static NSInteger gPlayDownloads=0; static NSString*gStreamingId=nil, *gDeferredP
     NSString*path=url.path.length?url.path:@"/"; if(url.query.length) path=[path stringByAppendingFormat:@"?%@",url.query];
     int st=0; NSData*d=httpsReq(@"GET",url.host,path,@[],nil,&st);
     return (st==200 && d.length)?d:nil;
+}
++ (NSDictionary *)lastFMPost:(NSString *)formBody status:(NSInteger *)status {
+    int st=0; NSArray *headers=@[@"Content-Type: application/x-www-form-urlencoded",@"Accept: application/json"];
+    NSData *body=[(formBody?:@"") dataUsingEncoding:NSUTF8StringEncoding];
+    NSData *data=httpsReq(@"POST",@"ws.audioscrobbler.com",@"/2.0/",headers,body,&st);
+    if(status)*status=st;
+    NSDictionary *json=data.length?[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
+    if(![json isKindOfClass:[NSDictionary class]]) json=nil;
+    return json;
 }
 + (NSString *)deviceModel { char b[64]={0}; size_t n=sizeof b; sysctlbyname("hw.machine",b,&n,NULL,0); return [NSString stringWithUTF8String:b]; }
 + (BOOL)isLoading { return gLoading; }
