@@ -5,6 +5,7 @@
 #import <libkern/OSAtomic.h>
 #import <sys/resource.h>
 #import "MMSpotify.h"
+#import "MMEqualizerDSP.h"
 
 // stb_vorbis direkt einbinden (kein separates Kompilat -> keine Doppel-Symbole).
 #define STB_VORBIS_NO_STDIO
@@ -30,6 +31,8 @@ static NSUInteger gPlaySerial=0;        // zählt je Start hoch: nachgeholtes Sp
 static BOOL gDurationExact=YES;
 static double gExpected=0;              // Länge aus den Metadaten (Sekunden), bis die Datei ganz da ist
 static BOOL gStarved=NO;                // gerade in einer Lade-Lücke (für eine Log-Zeile pro Lücke)
+static MMEQState gEQ;
+static BOOL gEQEnabled=NO, gEQLoaded=NO;
 
 // ---- CPU-Messung (3GS): Dekodierzeit im Verhältnis zur erzeugten Audiodauer + CPU des ganzen Prozesses.
 // Alle 30 s Audio eine Zeile ins App-Log. decode 25% = Vorbis braucht ein Viertel eines Kerns.
@@ -80,6 +83,7 @@ static void fillCb(void *ud, AudioQueueRef q, AudioQueueBufferRef buf){
     gStarved=NO;
     double t0=nowSec();
     int got=stb_vorbis_get_samples_short_interleaved(gV,gCh,out,capShorts); // got = Frames pro Kanal
+    if(got>0 && gEQEnabled) MMEQProcess(&gEQ,out,(unsigned)got,(unsigned)gCh);
     if(got>0) cpuAccount(nowSec()-t0,got);
     if(got>0 && st && !gStreamDone && !gDurationExact && gExpected<=0){   // ohne Metadaten-Länge schätzen: Bytes pro Sekunde bisher hochgerechnet auf die ganze Datei
         double played=stb_vorbis_get_sample_offset(gV)/(gSampleRate>0?gSampleRate:44100.0); unsigned off=stb_vorbis_get_file_offset(gV);
@@ -104,6 +108,17 @@ static void fillCb(void *ud, AudioQueueRef q, AudioQueueBufferRef buf){
 
 @implementation MMAudio
 
++ (void)setEqualizerEnabled:(BOOL)enabled { gEQEnabled=enabled; gEQLoaded=YES; [[NSUserDefaults standardUserDefaults] setBool:enabled forKey:@"equalizer.enabled"]; }
++ (BOOL)isEqualizerEnabled { return gEQLoaded?gEQEnabled:[[NSUserDefaults standardUserDefaults] boolForKey:@"equalizer.enabled"]; }
++ (void)setEqualizerGain:(double)gain forBand:(NSUInteger)band {
+    if(band>=MM_EQ_BANDS)return;
+    NSArray *old=[[NSUserDefaults standardUserDefaults] arrayForKey:@"equalizer.gains"];
+    NSMutableArray *g=[NSMutableArray arrayWithCapacity:MM_EQ_BANDS];
+    for(NSUInteger i=0;i<MM_EQ_BANDS;i++) [g addObject:(i<old.count?old[i]:@0)];
+    g[band]=@(gain); [[NSUserDefaults standardUserDefaults] setObject:g forKey:@"equalizer.gains"];
+    MMEQSetGain(&gEQ,(unsigned)band,gain);
+}
+
 + (void)playOgg:(NSData *)ogg { [self start:ogg stream:nil]; }
 + (void)playStream:(MMAudioStream *)stream { [self start:stream.data stream:stream]; }
 + (void)setExpectedDuration:(double)seconds { gExpected=seconds; if(gStream && !gDurationExact && seconds>0) gDuration=seconds; }
@@ -123,6 +138,10 @@ static void fillCb(void *ud, AudioQueueRef q, AudioQueueBufferRef buf){
     stb_vorbis_info info=stb_vorbis_get_info(gV);
     gCh=info.channels>0?info.channels:2;
     gSampleRate=info.sample_rate>0?info.sample_rate:44100.0;
+    MMEQInit(&gEQ,gSampleRate);
+    NSArray *saved=[[NSUserDefaults standardUserDefaults] arrayForKey:@"equalizer.gains"];
+    for(NSUInteger i=0;i<MIN(saved.count,MM_EQ_BANDS);i++) MMEQSetGain(&gEQ,(unsigned)i,[saved[i] doubleValue]);
+    gEQEnabled=[[NSUserDefaults standardUserDefaults] boolForKey:@"equalizer.enabled"]; gEQLoaded=YES;
     gStream=stream; gStreamDone=(stream==nil); gSilent=0; gPendingSeek=-1; gPlaySerial++;
     gDurationExact=(stream==nil || stream.complete);
     gDuration=gDurationExact?stb_vorbis_stream_length_in_seconds(gV):gExpected;   // lädt noch: Länge aus den Metadaten (sonst später geschätzt)

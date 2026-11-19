@@ -12,6 +12,9 @@
 #import "MMSheet.h"
 #import "MMLastFMController.h"
 #import "MMLastFM.h"
+#import "MMEqualizerController.h"
+#import "MMAudio.h"
+#import <math.h>
 
 @interface MMSettingsController () <UITableViewDataSource, UITableViewDelegate>
 @end
@@ -56,6 +59,8 @@
                             @{@"kind":@"switch",@"title":L(@"Album/playlist page covers"),@"key":@"cover"}]},
       @{@"title":L(@"Skin"),@"footer":@"",
         @"rows":@[@{@"kind":@"link",@"title":L(@"Skin"),@"key":@"skin",@"detail":[SpotTheme ios6]?@"Classic iOS":@"Spotify"}]},
+      @{ @"title":L(@"Audio"),@"footer":@"",
+        @"rows":@[@{@"kind":@"link",@"title":L(@"Equalizer"),@"key":@"equalizer",@"detail":[self equalizerDetail]}]},
       @{@"title":L(@"Notification Center"),@"footer":L(@"Shows the current song with play, back and next in Notification Center."),
         @"rows":@[@{@"kind":@"switch",@"title":L(@"Now playing widget"),@"key":@"ncw"}]},
       @{@"title":L(@"Search"),@"footer":L(@"Search uses your own free Spotify developer key."),
@@ -88,6 +93,12 @@
     // ganz unten die installierte Version (aus der Info.plist, passt also immer zum Build)
     [it addObject:@{@"kind":@"version",@"title":[NSString stringWithFormat:@"Spotify6 %@",[[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"]]}];
     _items=it;
+}
+- (NSString *)equalizerDetail {
+    if(![MMAudio isEqualizerEnabled]) return L(@"Off");
+    NSArray *g=[[NSUserDefaults standardUserDefaults] arrayForKey:@"equalizer.gains"];
+    for(id v in g) if(fabs([v doubleValue])>0.01) return L(@"Custom");
+    return L(@"Flat");
 }
 - (BOOL)valueFor:(NSString *)key {
     if([key isEqual:@"bg"]) return [MMKeepAlive enabled];
@@ -206,7 +217,8 @@ static UIImage* chevron(void){
     if([r[@"kind"] isEqual:@"link"]) [self run:r[@"key"]];
 }
 - (void)run:(NSString *)key {
-    if([key isEqual:@"key"]){
+    if([key isEqual:@"equalizer"]) [[MMRootController shared] pushContent:[[MMEqualizerController alloc] init]];
+    else if([key isEqual:@"key"]){
         MMKeySetupController*k=[[MMKeySetupController alloc] init]; k.skippable=NO;
         k.onDone=^(BOOL saved){ [[MMRootController shared] popContent]; };
         [[MMRootController shared] pushContent:k];

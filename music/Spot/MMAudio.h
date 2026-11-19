@@ -27,4 +27,7 @@
 + (double)duration;      // Sekunden
 + (double)currentTime;   // Sekunden (echte Abspielposition)
 + (void)seekTo:(double)seconds;   // an Position springen
++ (void)setEqualizerEnabled:(BOOL)enabled;
++ (BOOL)isEqualizerEnabled;
++ (void)setEqualizerGain:(double)gain forBand:(NSUInteger)band;
 @end
