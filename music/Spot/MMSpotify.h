@@ -2,6 +2,8 @@
 // Portiert aus den bewiesenen Mac-Tools. Läuft im Hintergrund, meldet Ergebnis auf dem Main-Thread.
 #import <Foundation/Foundation.h>
 
+#define MM_LIKED_DOWNLOAD_MIN_FREE_BYTES (256LL * 1024 * 1024)
+
 // Alle Daten (Login, Tokens, Downloads, Cache) liegen im App-Container unter Library/Riff:
 // Spotify6 ist eine Nutzer-App (IPA) in der Sandbox, /var/mobile ist dort nicht beschreibbar.
 NSString *MMDataDir(void);              // <Container>/Library/Riff (wird angelegt)
@@ -20,6 +22,7 @@ void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Librar
 // Kommt das Netz zurück, verbindet sich die Wiedergabe-Session von selbst neu.
 + (BOOL)networkReachable;
 + (BOOL)wifiReachable;
++ (void)resumeQueuedDownloads;
 + (void)startNetworkWatch;
 // Auto-Login mit gespeicherten Zugangsdaten (kein Passwort/Browser nötig).
 + (void)loginStoredWithCompletion:(void(^)(BOOL ok, NSString *username, NSString *error))done;

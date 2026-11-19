@@ -14,7 +14,9 @@
 #import "MMLastFM.h"
 #import "MMEqualizerController.h"
 #import "MMAudio.h"
-#import <math.h>
+#import "MMEqualizer.h"
+#import "MMMediaQuality.h"
+#import "MMMediaQualityController.h"
 
 @interface MMSettingsController () <UITableViewDataSource, UITableViewDelegate>
 @end
@@ -60,7 +62,8 @@
       @{@"title":L(@"Skin"),@"footer":@"",
         @"rows":@[@{@"kind":@"link",@"title":L(@"Skin"),@"key":@"skin",@"detail":[SpotTheme ios6]?@"Classic iOS":@"Spotify"}]},
       @{ @"title":L(@"Audio"),@"footer":@"",
-        @"rows":@[@{@"kind":@"link",@"title":L(@"Equalizer"),@"key":@"equalizer",@"detail":[self equalizerDetail]}]},
+        @"rows":@[@{@"kind":@"link",@"title":L(@"Media Quality"),@"key":@"mediaQuality",@"detail":[MMMediaQuality streamingSummary]},
+                  @{@"kind":@"link",@"title":L(@"Equalizer"),@"key":@"equalizer",@"detail":[self equalizerDetail]}]},
       @{@"title":L(@"Notification Center"),@"footer":L(@"Shows the current song with play, back and next in Notification Center."),
         @"rows":@[@{@"kind":@"switch",@"title":L(@"Now playing widget"),@"key":@"ncw"}]},
       @{@"title":L(@"Search"),@"footer":L(@"Search uses your own free Spotify developer key."),
@@ -71,7 +74,7 @@
                   @{@"kind":@"button",@"title":@"Delete all offline downloads",@"key":@"clearDownloads"},
                   @{@"kind":@"switch",@"title":L(@"Background download"),@"key":@"bg"},
                   @{@"kind":@"switch",@"title":@"Repeat liked songs",@"key":@"likedRepeat"},
-                  @{@"kind":@"link",@"title":@"Daily liked songs limit",@"key":@"likedBudget",@"detail":([[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyBudgetMB"]?[NSString stringWithFormat:@"%.0f MB",[[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyBudgetMB"] doubleValue]]:@"Unlimited")} ]},
+                  @{@"kind":@"link",@"title":@"Daily liked songs limit",@"key":@"likedBudget",@"detail":([[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyBudgetMB"]?[NSString stringWithFormat:@"%.0f MB",[[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyBudgetMB"] doubleValue]]:L(@"Unlimited · 256 MB free"))} ]},
       @{@"title":L(@"Song cache"),@"footer":L(@"Recently played songs are kept (up to 500 MB) so they play again without downloading."),
         @"rows":@[@{@"kind":@"info",@"title":L(@"In use"),@"detail":[MMTrackListController fmtBytes:[MMSpotify songCacheBytes]]},
                   @{@"kind":@"button",@"title":L(@"Clear song cache"),@"key":@"clearcache"}]},
@@ -94,12 +97,7 @@
     [it addObject:@{@"kind":@"version",@"title":[NSString stringWithFormat:@"Spotify6 %@",[[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"]]}];
     _items=it;
 }
-- (NSString *)equalizerDetail {
-    if(![MMAudio isEqualizerEnabled]) return L(@"Off");
-    NSArray *g=[[NSUserDefaults standardUserDefaults] arrayForKey:@"equalizer.gains"];
-    for(id v in g) if(fabs([v doubleValue])>0.01) return L(@"Custom");
-    return L(@"Flat");
-}
+- (NSString *)equalizerDetail { return L([MMEqualizer presetName]); }
 - (BOOL)valueFor:(NSString *)key {
     if([key isEqual:@"bg"]) return [MMKeepAlive enabled];
     if([key isEqual:@"likedRepeat"]) return [[NSUserDefaults standardUserDefaults] boolForKey:@"likedDailyRepeat"] ;
@@ -217,7 +215,8 @@ static UIImage* chevron(void){
     if([r[@"kind"] isEqual:@"link"]) [self run:r[@"key"]];
 }
 - (void)run:(NSString *)key {
-    if([key isEqual:@"equalizer"]) [[MMRootController shared] pushContent:[[MMEqualizerController alloc] init]];
+    if([key isEqual:@"mediaQuality"]) [[MMRootController shared] pushContent:[[MMMediaQualityController alloc] init]];
+    else if([key isEqual:@"equalizer"]) [[MMRootController shared] pushContent:[[MMEqualizerController alloc] init]];
     else if([key isEqual:@"key"]){
         MMKeySetupController*k=[[MMKeySetupController alloc] init]; k.skippable=NO;
         k.onDone=^(BOOL saved){ [[MMRootController shared] popContent]; };
@@ -232,7 +231,7 @@ static UIImage* chevron(void){
             [MMRootController switchSkin:sk];   // Oberfläche neu aufbauen, Wiedergabe läuft weiter
         }];
     }
-    else if([key isEqual:@"likedBudget"]) [MMSheet showIn:[MMRootController shared].view title:@"Daily liked songs limit" subtitle:@"Choose the maximum estimated audio space" options:@[@"Unlimited",@"256 MB",@"512 MB",@"1 GB"] done:^(NSInteger i){ if(i==0){ [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"likedDailyBudgetMB"]; } else if(i>0){ double mb=i==1?256.0:i==2?512.0:1024.0; [[NSUserDefaults standardUserDefaults] setDouble:mb forKey:@"likedDailyBudgetMB"]; } if(i>=0){ [[NSUserDefaults standardUserDefaults] synchronize]; [self build]; [_table reloadData]; } }];
+    else if([key isEqual:@"likedBudget"]) [MMSheet showIn:[MMRootController shared].view title:L(@"Daily liked songs limit") subtitle:L(@"Unlimited keeps at least 256 MB free for apps and photos") options:@[L(@"Unlimited · 256 MB free"),@"256 MB",@"512 MB",@"1 GB"] done:^(NSInteger i){ if(i==0){ [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"likedDailyBudgetMB"]; } else if(i>0){ double mb=i==1?256.0:i==2?512.0:1024.0; [[NSUserDefaults standardUserDefaults] setDouble:mb forKey:@"likedDailyBudgetMB"]; } if(i>=0){ [[NSUserDefaults standardUserDefaults] synchronize]; [self build]; [_table reloadData]; } }];
     else if([key isEqual:@"downloads"]) [[MMRootController shared] pushContent:[[MMDownloadsController alloc] init]];
     else if([key isEqual:@"clearDownloads"]){
         NSArray*files=[MMSpotify downloadedTracks]; long long bytes=0; for(NSDictionary*d in files) bytes+=[d[@"bytes"] longLongValue];

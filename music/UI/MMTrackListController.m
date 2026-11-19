@@ -6,6 +6,7 @@
 #import <limits.h>
 static char kRowKey;   // Zeilennummer am Artist-Label (Album-Seite)
 #import "MMSpotify.h"
+#import "MMMediaQuality.h"
 #import "MMRootController.h"
 #import "MMCovers.h"
 #import "MeshL10n.h"
@@ -456,8 +457,15 @@ static UIImage* offIcon(BOOL have, UIColor*grn){
         NSMutableArray*history=[NSMutableArray arrayWithArray:[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyHistory"]?:@[]];
         NSMutableSet*recent=[NSMutableSet set]; if(!allow) for(id a in history) if([a isKindOfClass:[NSArray class]]) [recent addObjectsFromArray:a];
         for(NSInteger i=(NSInteger)pool.count-1;i>0;i--){ NSInteger j=arc4random_uniform((uint32_t)i+1); [pool exchangeObjectAtIndex:i withObjectAtIndex:j]; }
-        id budgetValue=[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyBudgetMB"]; long long budget=budgetValue?(long long)([budgetValue doubleValue]*1024*1024):LLONG_MAX;
+        id budgetValue=[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyBudgetMB"];
+        long long budget=budgetValue?(long long)([budgetValue doubleValue]*1024*1024):LLONG_MAX;
+        // Streaming cache is expendable: reclaim it before estimating how far
+        // the unlimited liked-song queue can safely fill the device.
+        [MMSpotify songCacheBytes];
+        long long spaceBudget=MAX(0,[MMSpotify freeDiskBytes]-MM_LIKED_DOWNLOAD_MIN_FREE_BYTES);
         NSMutableArray*chosen=[NSMutableArray array]; long long bytes=0; NSArray*have=[MMSpotify downloadedTracks]; NSMutableDictionary*downloaded=[NSMutableDictionary dictionary]; for(NSDictionary*d in have) downloaded[d[@"id"]]=d[@"bytes"]?:@0;
+        NSInteger estimateKbps=[MMMediaQuality downloadBitrateForWiFi];
+        long long newBytes=0;
         // Budget applies only to the newly selected set; existing downloads use their actual file sizes.
         NSMutableArray*candidates=[NSMutableArray array];
         for(NSDictionary*t in pool) if(allow || ![recent containsObject:t[@"id"]]) [candidates addObject:t];
@@ -468,8 +476,17 @@ static UIImage* offIcon(BOOL have, UIColor*grn){
             for(NSInteger i=(NSInteger)older.count-1;i>0;i--){ NSInteger j=arc4random_uniform((uint32_t)i+1); [older exchangeObjectAtIndex:i withObjectAtIndex:j]; }
             [candidates addObjectsFromArray:older];
         }
-        for(NSDictionary*t in candidates){ NSString*tid=t[@"id"]; long long estimate=downloaded[tid]?[downloaded[tid] longLongValue]:MAX(1,[t[@"dur"] longLongValue])*320/8; if(budget!=LLONG_MAX && (estimate>budget || bytes>budget-estimate)) continue; [chosen addObject:tid]; if(bytes<=LLONG_MAX-estimate) bytes+=estimate; else bytes=LLONG_MAX; }
-        if(!chosen.count){ [_offSpin stopAnimating]; _offBtn.hidden=NO; [[[UIAlertView alloc] initWithTitle:@"Limite diário" message:@"O limite de espaço atual não comporta nenhuma música. Aumente o limite em Configurações → Downloads." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show]; return; }
+        for(NSDictionary*t in candidates){
+            NSString*tid=t[@"id"];
+            long long existingBytes=[downloaded[tid] longLongValue];
+            long long estimate=existingBytes?existingBytes:MAX(1,[t[@"dur"] longLongValue])*estimateKbps/8;
+            long long storageCost=existingBytes?0:estimate;
+            if((budget!=LLONG_MAX && (estimate>budget || bytes>budget-estimate)) || storageCost>spaceBudget || newBytes>spaceBudget-storageCost) continue;
+            [chosen addObject:tid];
+            if(bytes<=LLONG_MAX-estimate) bytes+=estimate; else bytes=LLONG_MAX;
+            if(newBytes<=LLONG_MAX-storageCost) newBytes+=storageCost; else newBytes=LLONG_MAX;
+        }
+        if(!chosen.count){ [_offSpin stopAnimating]; _offBtn.hidden=NO; [[[UIAlertView alloc] initWithTitle:@"Limite diário" message:@"Não há espaço suficiente sem usar a reserva mínima de 256 MB para o sistema, apps e fotos." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show]; return; }
         NSMutableArray*newHist=[NSMutableArray arrayWithObject:chosen]; [newHist addObjectsFromArray:history]; while(newHist.count>7) [newHist removeLastObject]; [[NSUserDefaults standardUserDefaults] setObject:newHist forKey:@"likedDailyHistory"];
         [MMSpotify queueLikedDailyTracks:chosen]; [_offSpin stopAnimating]; _offBtn.hidden=NO;
         NSString*msg=[NSString stringWithFormat:@"%lu músicas · %@ estimados",(unsigned long)chosen.count,[MMTrackListController fmtBytes:bytes]];
