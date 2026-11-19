@@ -144,6 +144,13 @@
 "Download" = "Download";
 "Remove download" = "Remove download";
 "Display" = "Display";
+"Audio" = "Audio";
+"Equalizer" = "Equalizer";
+"Enable equalizer" = "Enable equalizer";
+"Off" = "Off";
+"Flat" = "Flat";
+"Custom" = "Custom";
+"Reset" = "Reset";
 "Big covers: albums and playlists open with their cover at the top and numbered songs." = "Big covers: albums and playlists open with their cover at the top and numbered songs.";
 "Cover Flow when rotated" = "Cover Flow when rotated";
 "Search uses your own free Spotify developer key." = "Search uses your own free Spotify developer key.";
