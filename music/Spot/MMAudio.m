@@ -4,6 +4,7 @@
 #import <mach/mach_time.h>
 #import <libkern/OSAtomic.h>
 #import <sys/resource.h>
+#import <math.h>
 #import "MMSpotify.h"
 #import "MMEqualizer.h"
 
@@ -137,7 +138,8 @@ static void applyEQState(void){
     if(!gEQUnit)return;
     AudioUnitSetParameter(gEQUnit,kAUNBandEQParam_GlobalGain,kAudioUnitScope_Global,0,equalizerPreamp(),0);
     for(UInt32 i=0;i<10;i++)
-        AudioUnitSetParameter(gEQUnit,kAUNBandEQParam_BypassBand+i,kAudioUnitScope_Global,0,gEQEnabled?0.0f:1.0f,0);
+        AudioUnitSetParameter(gEQUnit,kAUNBandEQParam_BypassBand+i,kAudioUnitScope_Global,0,
+                              (gEQEnabled && fabs(gEQGains[i])>0.001)?0.0f:1.0f,0);
 }
 
 static void applyEQParameters(void){
@@ -232,7 +234,9 @@ fail:
     gEQGains[band]=[MMEqualizer gainForBand:band];
     if(gEQUnit){
         AudioUnitSetParameter(gEQUnit,kAUNBandEQParam_Gain+(UInt32)band,kAudioUnitScope_Global,0,(Float32)gEQGains[band],0);
-        applyEQState();
+        AudioUnitSetParameter(gEQUnit,kAUNBandEQParam_BypassBand+(UInt32)band,kAudioUnitScope_Global,0,
+                              (gEQEnabled && fabs(gEQGains[band])>0.001)?0.0f:1.0f,0);
+        AudioUnitSetParameter(gEQUnit,kAUNBandEQParam_GlobalGain,kAudioUnitScope_Global,0,equalizerPreamp(),0);
     }
 }
 
