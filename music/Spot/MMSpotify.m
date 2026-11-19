@@ -882,22 +882,51 @@ static void setUnavailable(NSString*tid, BOOL on){
     NSUserDefaults *ud=[NSUserDefaults standardUserDefaults];
     NSArray *old= [ud objectForKey:@"likedDailyOwnedIDs"]?:@[];
     NSMutableSet *manual=[NSMutableSet setWithArray:[ud objectForKey:@"manualDownloadIDs"]?:@[]];
-    NSArray *offline=[NSArray arrayWithContentsOfFile:offlinePath()]?:@[];
     NSSet *next=[NSSet setWithArray:trackIds];
+    NSMutableArray *retiring=[NSMutableArray arrayWithArray:[ud objectForKey:@"likedDailyRetiringIDs"]?:@[]];
+    for(NSString *tid in old) if(![next containsObject:tid] && ![manual containsObject:tid] && ![retiring containsObject:tid]) [retiring addObject:tid];
+    for(NSString *tid in trackIds) [retiring removeObject:tid];
     // Drop obsolete automatic IDs from the pending queue before reconciling files.
     @synchronized([MMSpotify class]) {
         for(NSString *tid in old) if(![next containsObject:tid]) { [gDlQueue removeObject:tid]; [gDailyLikedIDs removeObject:tid]; }
     }
-    for(NSString *tid in old) if(![next containsObject:tid] && ![manual containsObject:tid]) {
-        BOOL shared=NO; for(NSDictionary *entry in offline) if([entry[@"ids"] containsObject:tid]) { shared=YES; break; }
-        if(!shared) [[NSFileManager defaultManager] removeItemAtPath:diskPath(tid) error:NULL];
-    }
-    NSMutableSet *owned=[NSMutableSet set]; for(NSString *tid in trackIds) if(!diskHas(tid) && ![manual containsObject:tid]) [owned addObject:tid];
-    [owned addObjectsFromArray:old]; [owned intersectSet:next];
+    NSMutableSet *owned=[NSMutableSet setWithArray:old]; [owned intersectSet:next];
+    for(NSString *tid in trackIds) if(![manual containsObject:tid]) [owned addObject:tid];
     NSMutableArray *pending=[NSMutableArray array]; for(NSString *tid in trackIds) if(!diskHas(tid) && !isUnavailable(tid)) [pending addObject:tid];
-    [ud setObject:pending forKey:@"likedDailyPendingIDs"]; [ud setObject:[owned allObjects] forKey:@"likedDailyOwnedIDs"]; [ud synchronize];
+    [ud setObject:pending forKey:@"likedDailyPendingIDs"];
+    [ud setObject:[owned allObjects] forKey:@"likedDailyOwnedIDs"];
+    [ud setObject:retiring forKey:@"likedDailyRetiringIDs"];
+    [ud synchronize];
     @synchronized([MMSpotify class]){ if(!gDailyLikedIDs) gDailyLikedIDs=[NSMutableSet set]; for(NSString *tid in pending) if(![manual containsObject:tid]) [gDailyLikedIDs addObject:tid]; }
     [self enqueueTracks:trackIds automatic:YES];
+}
+
+// Retire no more than one old daily-liked file after a replacement was saved.
++ (void)retireOneDailyLikedTrack {
+    NSUserDefaults *ud=[NSUserDefaults standardUserDefaults];
+    NSMutableArray *retiring=[[ud objectForKey:@"likedDailyRetiringIDs"] mutableCopy]?:[NSMutableArray array];
+    if(!retiring.count) return;
+    NSMutableSet *manual=[NSMutableSet setWithArray:[ud objectForKey:@"manualDownloadIDs"]?:@[]];
+    NSMutableSet *owned=[NSMutableSet setWithArray:[ud objectForKey:@"likedDailyOwnedIDs"]?:@[]];
+    NSArray *offline=[NSArray arrayWithContentsOfFile:offlinePath()]?:@[];
+    BOOL deleted=NO;
+    for(NSInteger i=0;i<(NSInteger)retiring.count;i++) {
+        NSString *tid=retiring[i];
+        if([manual containsObject:tid]) { [retiring removeObjectAtIndex:i--]; [owned removeObject:tid]; continue; }
+        BOOL shared=NO;
+        for(NSDictionary *entry in offline) if([entry[@"ids"] containsObject:tid]) { shared=YES; break; }
+        if(shared) continue;
+        if(!diskHas(tid)) { [retiring removeObjectAtIndex:i--]; [owned removeObject:tid]; continue; }
+        NSError *error=nil;
+        if([[NSFileManager defaultManager] removeItemAtPath:diskPath(tid) error:&error]) {
+            [retiring removeObjectAtIndex:i]; [owned removeObject:tid]; deleted=YES; break;
+        }
+        slog(@"liked rotation: could not remove old track %@ (%@)",tid,error.localizedDescription?:@"unknown error");
+    }
+    [ud setObject:retiring forKey:@"likedDailyRetiringIDs"];
+    [ud setObject:[owned allObjects] forKey:@"likedDailyOwnedIDs"];
+    [ud synchronize];
+    if(deleted) dispatch_async(dispatch_get_main_queue(), ^{ [[NSNotificationCenter defaultCenter] postNotificationName:@"MMDownloadsChanged" object:nil]; });
 }
 
 + (void)dlFinishTrack:(NSString *)tid {
@@ -982,7 +1011,7 @@ static void setUnavailable(NSString*tid, BOOL on){
             __block BOOL moved=NO;   // schon im Song-Cache -> nur verschieben, nicht neu laden
             NSInteger downloadBitrate=[MMMediaQuality downloadBitrateForCurrentNetwork];
             dispatch_sync(streamQ(), ^{ moved=streamHas(tid,downloadBitrate) && rename(streamPath(tid,downloadBitrate).fileSystemRepresentation, diskPath(tid).fileSystemRepresentation)==0; });
-            if(moved){ slog(@"dl %@ aus dem Song-Cache übernommen",tid); dlinfoRemember(@[tid]); [MMSpotify dlFinishTrack:tid]; return; }
+            if(moved){ slog(@"dl %@ aus dem Song-Cache übernommen",tid); dlinfoRemember(@[tid]); if(dailyLiked) [MMSpotify retireOneDailyLikedTrack]; [MMSpotify dlFinishTrack:tid]; return; }
             if([MMSpotify freeDiskBytes] < 80*1024*1024) dispatch_sync(streamQ(), ^{ streamTrim(0,nil); });   // Song-Cache für Downloads freigeben
             if([MMSpotify freeDiskBytes] < 80*1024*1024){   // Platte voll -> abbrechen
                 @synchronized([MMSpotify class]){ [gDlQueue removeAllObjects]; gDlRunning=NO; gDlDone=0; gDlTotal=0; gDlUnavail=0; [gDlSeen removeAllObjects]; }
@@ -1030,7 +1059,8 @@ static void setUnavailable(NSString*tid, BOOL on){
                     if(d.length && dailyLiked && [MMSpotify freeDiskBytes]-(long long)d.length<MM_LIKED_DOWNLOAD_MIN_FREE_BYTES) {
                         [MMSpotify dlSkipDailyTrackForStorage:tid]; return;
                     }
-                    if(d.length){ [d writeToFile:diskPath(tid) atomically:YES]; dlinfoRemember(@[tid]); setUnavailable(tid,NO); }
+                    BOOL stored=NO;
+                    if(d.length){ stored=[d writeToFile:diskPath(tid) atomically:YES]; if(stored){ dlinfoRemember(@[tid]); setUnavailable(tid,NO); if(dailyLiked) [MMSpotify retireOneDailyLikedTrack]; } }
                     NSInteger currentBitrate=[MMMediaQuality downloadBitrateForCurrentNetwork];
                     if(!d.length && (![MMSpotify networkReachable] || currentBitrate!=requestedBitrate)) {
                         @synchronized([MMSpotify class]){ gDlRunning=NO; }
@@ -1063,7 +1093,7 @@ static NSString *offlinePath(void){ return [diskDir() stringByAppendingPathCompo
     [fm removeItemAtPath:offlinePath() error:NULL];
     [fm removeItemAtPath:[dir stringByAppendingPathComponent:@"dlinfo.plist"] error:NULL];
     NSUserDefaults *ud=[NSUserDefaults standardUserDefaults];
-    for(NSString *key in @[@"manualDownloadIDs",@"likedDailyPendingIDs",@"likedDailyOwnedIDs"])
+    for(NSString *key in @[@"manualDownloadIDs",@"likedDailyPendingIDs",@"likedDailyOwnedIDs",@"likedDailyRetiringIDs"])
         [ud removeObjectForKey:key];
     [ud synchronize];
     dispatch_async(dispatch_get_main_queue(), ^{ [[NSNotificationCenter defaultCenter] postNotificationName:@"MMDownloadsChanged" object:nil]; });
