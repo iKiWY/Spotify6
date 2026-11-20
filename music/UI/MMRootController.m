@@ -53,6 +53,7 @@ static MMRootController *gRoot;
     CGFloat _tabH, _npH;
     MMPadSidebar *_sidebar; MMPadPlayerBar *_padBar;   // iPad: Seitenleiste + Player-Leiste (statt Tab- und Now-Playing-Leiste)
     BOOL _loading;                                     // Titel lädt (Kreisel statt Play)
+    BOOL _resumePlaybackAfterInterruption;
     MMQueueController *_queueDock; UIView *_queueEdge;
     UIView *_npLoad;                                   // iPhone: grüne Ladelinie oben an der Now-Playing-Leiste  // iPad quer: Warteschlange als Spalte rechts (Inhalt wird schmaler)
 }
@@ -221,6 +222,7 @@ MM_IOS6_END
     gRoot = self;
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(trackFinished) name:@"MMAudioDidFinish" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(saveState) name:UIApplicationDidEnterBackgroundNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(audioDidEnterBackground) name:UIApplicationDidEnterBackgroundNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(saveState) name:UIApplicationWillTerminateNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlProgress:) name:@"MMDownloadProgress" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlDone:) name:@"MMDownloadDone" object:nil];
@@ -428,8 +430,23 @@ MM_IOS6_END
 }
 - (void)beginInterruption { [self interruptionBegan]; }   // iOS 5
 - (void)endInterruptionWithFlags:(NSUInteger)flags { [self interruptionEndedResume:(flags & AVAudioSessionInterruptionFlags_ShouldResume)!=0]; }
-- (void)interruptionBegan { [MMAudio setPaused:YES]; [self drawNpPlay]; [self updateNowPlaying]; }
-- (void)interruptionEndedResume:(BOOL)resume { if(resume){ [MMAudio setPaused:NO]; [self drawNpPlay]; [self updateNowPlaying]; } }
+- (void)audioDidEnterBackground {
+    if([MMAudio isPlaying]) [MMAudio restorePlaybackIfNeeded];
+}
+- (void)interruptionBegan {
+    _resumePlaybackAfterInterruption=[MMAudio isPlaying];
+    [MMAudio setPaused:YES]; [self drawNpPlay]; [self updateNowPlaying];
+}
+- (void)interruptionEndedResume:(BOOL)resume {
+    BOOL continuePlayback=resume && _resumePlaybackAfterInterruption;
+    _resumePlaybackAfterInterruption=NO;
+    if(continuePlayback){
+        NSError *error=nil;
+        [[AVAudioSession sharedInstance] setActive:YES error:&error];
+        [MMAudio setPaused:NO];
+    }
+    [self drawNpPlay]; [self updateNowPlaying];
+}
 // Angetippter Titel lädt: wie weit er da ist (grün in der Leiste und im Player); -1 = fertig/aus
 - (void)trackLoadProgress:(NSNotification *)n {
     if(![n.userInfo[@"id"] isEqual:_curId]) return;   // auch während er schon spielt (Wiedergabe während des Downloads)
