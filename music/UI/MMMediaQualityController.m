@@ -12,6 +12,7 @@
 
 @implementation MMMediaQualityController {
     UITableView *_table;
+    UISegmentedControl *_mediaType;
 }
 
 - (void)loadView {
@@ -24,8 +25,12 @@
     UILabel *title=[[UILabel alloc] initWithFrame:CGRectMake(90,8,w-180,34)]; title.text=L(@"Media Quality");
     title.font=[UIFont boldSystemFontOfSize:16]; title.textAlignment=NSTextAlignmentCenter;
     title.textColor=[SpotTheme ink]; title.backgroundColor=[UIColor clearColor]; [self.view addSubview:title];
+    _mediaType=[[UISegmentedControl alloc] initWithItems:@[L(@"Music"),L(@"Podcasts")]];
+    _mediaType.frame=CGRectMake(42,45,w-84,30); _mediaType.selectedSegmentIndex=0;
+    [_mediaType addTarget:self action:@selector(mediaTypeChanged:) forControlEvents:UIControlEventValueChanged];
+    [self.view addSubview:_mediaType];
     CGFloat bottomInset=MMIsPad()?0:[[MMRootController shared] bottomBarsHeight];
-    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,46,w,MAX(0,h-46-bottomInset)) style:UITableViewStyleGrouped];
+    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,80,w,MAX(0,h-80-bottomInset)) style:UITableViewStyleGrouped];
     _table.backgroundColor=[SpotTheme bg]; _table.separatorStyle=[SpotTheme ios6]?UITableViewCellSeparatorStyleSingleLine:UITableViewCellSeparatorStyleNone;
     if([SpotTheme ios6]){ _table.backgroundView=nil; _table.backgroundColor=[UIColor clearColor]; }
     _table.dataSource=self; _table.delegate=self; _table.rowHeight=40;
@@ -35,8 +40,10 @@
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     CGFloat bottomInset=MMIsPad()?0:[[MMRootController shared] bottomBarsHeight];
-    _table.frame=CGRectMake(0,46,self.view.bounds.size.width,MAX(0,self.view.bounds.size.height-46-bottomInset));
+    _mediaType.frame=CGRectMake(42,45,self.view.bounds.size.width-84,30);
+    _table.frame=CGRectMake(0,80,self.view.bounds.size.width,MAX(0,self.view.bounds.size.height-80-bottomInset));
 }
+- (void)mediaTypeChanged:(UISegmentedControl *)control { [_table reloadData]; }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { return 2; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return 2; }
 - (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section { return 26; }
@@ -51,9 +58,9 @@
     UITableViewCell *cell=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
     BOOL wifi=indexPath.row==0;
     cell.textLabel.text=wifi?L(@"Wi-Fi"):L(@"Mobile Data");
-    NSInteger bitrate=0;
-    if(indexPath.section==0) bitrate=wifi?[MMMediaQuality streamingBitrateForWiFi]:[MMMediaQuality streamingBitrateForMobile];
-    else bitrate=wifi?[MMMediaQuality downloadBitrateForWiFi]:[MMMediaQuality downloadBitrateForMobile];
+    NSInteger bitrate=0; BOOL podcasts=_mediaType.selectedSegmentIndex==1;
+    if(indexPath.section==0) bitrate=podcasts?(wifi?[MMMediaQuality podcastStreamingBitrateForWiFi]:[MMMediaQuality podcastStreamingBitrateForMobile]):(wifi?[MMMediaQuality streamingBitrateForWiFi]:[MMMediaQuality streamingBitrateForMobile]);
+    else bitrate=podcasts?(wifi?[MMMediaQuality podcastDownloadBitrateForWiFi]:[MMMediaQuality podcastDownloadBitrateForMobile]):(wifi?[MMMediaQuality downloadBitrateForWiFi]:[MMMediaQuality downloadBitrateForMobile]);
     cell.detailTextLabel.text=[MMMediaQuality labelForBitrate:bitrate];
     cell.textLabel.textColor=[SpotTheme ink]; cell.detailTextLabel.textColor=[SpotTheme muted];
     cell.backgroundColor=[SpotTheme card]; cell.selectionStyle=UITableViewCellSelectionStyleGray;
@@ -62,9 +69,9 @@
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    BOOL wifi=indexPath.row==0, streaming=indexPath.section==0;
+    BOOL wifi=indexPath.row==0, streaming=indexPath.section==0, podcasts=_mediaType.selectedSegmentIndex==1;
     NSArray *options=streaming?@[@"96 kbps",@"160 kbps",@"320 kbps"]:(wifi?@[@"96 kbps",@"160 kbps",@"320 kbps"]:@[@"Off",@"96 kbps",@"160 kbps",@"320 kbps"]);
-    NSInteger current=streaming?(wifi?[MMMediaQuality streamingBitrateForWiFi]:[MMMediaQuality streamingBitrateForMobile]):(wifi?[MMMediaQuality downloadBitrateForWiFi]:[MMMediaQuality downloadBitrateForMobile]);
+    NSInteger current=streaming?(podcasts?(wifi?[MMMediaQuality podcastStreamingBitrateForWiFi]:[MMMediaQuality podcastStreamingBitrateForMobile]):(wifi?[MMMediaQuality streamingBitrateForWiFi]:[MMMediaQuality streamingBitrateForMobile])):(podcasts?(wifi?[MMMediaQuality podcastDownloadBitrateForWiFi]:[MMMediaQuality podcastDownloadBitrateForMobile]):(wifi?[MMMediaQuality downloadBitrateForWiFi]:[MMMediaQuality downloadBitrateForMobile]));
     NSInteger selected=0; for(NSUInteger i=0;i<options.count;i++) if([options[i] hasPrefix:[MMMediaQuality labelForBitrate:current]]) selected=(NSInteger)i;
     NSMutableArray *marked=[NSMutableArray arrayWithArray:options];
     marked[selected]=[NSString stringWithFormat:@"✓  %@",marked[selected]];
@@ -72,7 +79,8 @@
     [MMSheet showIn:[MMRootController shared].view title:heading subtitle:nil options:marked done:^(NSInteger index){
         if(index<0||index>=(NSInteger)options.count) return;
         NSInteger value=[options[index] isEqualToString:@"Off"]?0:[[options[index] componentsSeparatedByString:@" "][0] integerValue];
-        if(streaming) [MMMediaQuality setStreamingBitrate:value forWiFi:wifi]; else [MMMediaQuality setDownloadBitrate:value forWiFi:wifi];
+        if(podcasts){ if(streaming) [MMMediaQuality setPodcastStreamingBitrate:value forWiFi:wifi]; else [MMMediaQuality setPodcastDownloadBitrate:value forWiFi:wifi]; }
+        else { if(streaming) [MMMediaQuality setStreamingBitrate:value forWiFi:wifi]; else [MMMediaQuality setDownloadBitrate:value forWiFi:wifi]; }
         [self->_table reloadData];
     }];
 }

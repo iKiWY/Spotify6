@@ -4,6 +4,11 @@
 #import <mach/mach_time.h>
 #import <libkern/OSAtomic.h>
 #import <sys/resource.h>
+#import <sys/mman.h>
+#import <unistd.h>
+#import <fcntl.h>
+#import <limits.h>
+#import <stdio.h>
 #import <math.h>
 #import "MMSpotify.h"
 #import "MMEqualizer.h"
@@ -107,7 +112,7 @@ static OSStatus renderDecoded(void *refCon, AudioUnitRenderActionFlags *flags,
     if(got>0){ OSAtomicAdd64Barrier(got,(volatile int64_t *)&gPlayedFrames); cpuAccount(nowSec()-t0,got); }
     if(got>0 && st && !gStreamDone && !gDurationExact && gExpected<=0){
         double played=stb_vorbis_get_sample_offset(gV)/(gSampleRate>0?gSampleRate:44100.0); unsigned off=stb_vorbis_get_file_offset(gV);
-        if(played>5 && off>0) gDuration=played*(double)(st.data.length-167)/off;
+        if(played>5 && off>0) gDuration=played*(double)(st.length-167)/off;
     }
     if(got<=0){
         memset(out,0,buffer->mDataByteSize);
@@ -221,7 +226,44 @@ fail:
 }
 
 @implementation MMAudioStream
-- (id)initWithLength:(NSUInteger)length { if((self=[super init])) _data=[NSMutableData dataWithLength:length]; return self; }
+@synthesize avail=_avail, complete=_complete, failed=_failed;
+- (id)initWithLength:(NSUInteger)length { return [self initWithLength:length diskBacked:NO]; }
+- (id)initWithLength:(NSUInteger)length diskBacked:(BOOL)diskBacked {
+    if(!length) return nil;
+    if((self=[super init])){
+        _fileDescriptor=-1; _length=length;
+        if(diskBacked){
+            char path[PATH_MAX];
+            const char *tmp=[NSTemporaryDirectory() fileSystemRepresentation];
+            int written=snprintf(path,sizeof(path),"%s/spotify6-stream-XXXXXX",tmp);
+            if(written<0 || written>=(int)sizeof(path)){ self=nil; return nil; }
+            _fileDescriptor=mkstemp(path);
+            if(_fileDescriptor<0){ self=nil; return nil; }
+            unlink(path);   // anonymous temporary backing; not an offline download
+#ifdef __APPLE__
+            fstore_t allocation; memset(&allocation,0,sizeof(allocation));
+            allocation.fst_flags=F_ALLOCATEALL; allocation.fst_posmode=F_PEOFPOSMODE; allocation.fst_length=(off_t)length;
+            if(fcntl(_fileDescriptor,F_PREALLOCATE,&allocation)<0){
+                allocation.fst_flags=F_ALLOCATECONTIG;
+                if(fcntl(_fileDescriptor,F_PREALLOCATE,&allocation)<0){ close(_fileDescriptor); _fileDescriptor=-1; self=nil; return nil; }
+            }
+#else
+            if(posix_fallocate(_fileDescriptor,0,(off_t)length)!=0){ close(_fileDescriptor); _fileDescriptor=-1; self=nil; return nil; }
+#endif
+            if(ftruncate(_fileDescriptor,(off_t)length)!=0){ close(_fileDescriptor); _fileDescriptor=-1; self=nil; return nil; }
+            _mapping=mmap(NULL,length,PROT_READ|PROT_WRITE,MAP_SHARED,_fileDescriptor,0);
+            if(_mapping==MAP_FAILED){ _mapping=NULL; close(_fileDescriptor); _fileDescriptor=-1; self=nil; return nil; }
+        } else _memoryData=[[NSMutableData alloc] initWithLength:length];
+    }
+    return self;
+}
+- (void *)bytes { return _mapping?:_memoryData.mutableBytes; }
+- (NSUInteger)length { return _length; }
+- (NSData *)completedData { return _memoryData; }
+- (void)dealloc {
+    if(_mapping) munmap(_mapping,_length);
+    if(_fileDescriptor>=0) close(_fileDescriptor);
+}
 @end
 
 @implementation MMAudio
@@ -241,7 +283,10 @@ fail:
 }
 
 + (void)playOgg:(NSData *)ogg { [self start:ogg stream:nil]; }
-+ (void)playStream:(MMAudioStream *)stream { [self start:stream.data stream:stream]; }
++ (void)playStream:(MMAudioStream *)stream {
+    NSData *view=[NSData dataWithBytesNoCopy:stream.bytes length:stream.length freeWhenDone:NO];
+    [self start:view stream:stream];
+}
 + (void)setExpectedDuration:(double)seconds { gExpected=seconds; if(gStream && !gDurationExact && seconds>0) gDuration=seconds; }
 + (MMAudioStream *)currentStream { return gStream; }
 + (BOOL)isBuffering { MMAudioStream*st=gStream; return st && !st.complete && gRunning; }   // gStream wird nur auf dem Main-Thread gesetzt

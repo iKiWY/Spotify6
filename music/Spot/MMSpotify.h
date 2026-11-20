@@ -31,15 +31,19 @@ void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Librar
 // Lädt + entschlüsselt den ganzen Track und spielt ihn ab (MMAudio).
 + (void)playTrack:(NSString *)trackId completion:(void(^)(BOOL ok, NSString *error))done;
 + (void)playTrack:(NSString *)trackId stream:(BOOL)stream completion:(void(^)(BOOL ok, NSString *error))done;   // stream=NO: erst ganz laden
++ (void)playEpisode:(NSString *)episodeId stream:(BOOL)stream completion:(void(^)(BOOL ok, NSString *error))done;
 // Lädt + entschlüsselt den nächsten Track im Hintergrund in den Cache (für nahtlosen Übergang).
 + (void)prefetchTrack:(NSString *)trackId;
 // --- Offline: Playlists herunterladen ---
 + (BOOL)isDownloaded:(NSString *)trackId;
++ (BOOL)isDownloaded:(NSString *)mediaId mediaType:(NSString *)mediaType;
 + (BOOL)playableOffline:(NSString *)trackId;   // heruntergeladen, im Song-Cache oder im RAM -> spielt ohne Netz
++ (BOOL)playableOffline:(NSString *)mediaId mediaType:(NSString *)mediaType;
 + (BOOL)allDownloaded:(NSArray *)trackIds;   // sind alle trackIds auf der Platte?
 // Reiht Tracks in die globale Download-Warteschlange ein (mehrere Playlists nacheinander).
 // Status per Notification: MMDownloadProgress {done,total} · MMDownloadDone {ok} · MMDownloadFull
 + (void)queueDownloadTracks:(NSArray *)trackIds;
++ (void)queueDownloadEpisodes:(NSArray *)episodeIds;
 + (void)queueLikedDailyTracks:(NSArray *)trackIds;
 + (void)removeDownloads:(NSArray *)trackIds;
 // Offline-Playlists dauerhaft merken -> beim Start werden fehlende Tracks automatisch weitergeladen.

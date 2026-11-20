@@ -146,6 +146,15 @@
 "Display" = "Display";
 "Audio" = "Audio";
 "Media Quality" = "Media Quality";
+"Music and Podcasts" = "Music and Podcasts";
+"Music" = "Music";
+"Podcasts" = "Podcasts";
+"Shows" = "Shows";
+"Episodes" = "Episodes";
+"Episode" = "Episode";
+"Podcast" = "Podcast";
+"1 episode" = "1 episode";
+"%lu episodes" = "%lu episodes";
 "Streaming" = "Streaming";
 "Wi-Fi" = "Wi-Fi";
 "Mobile Data" = "Mobile Data";

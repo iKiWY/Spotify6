@@ -14,9 +14,19 @@ typedef NS_ENUM(NSInteger, MMMediaBitrate) {
 + (NSInteger)streamingBitrateForMobile;
 + (NSInteger)downloadBitrateForWiFi;
 + (NSInteger)downloadBitrateForMobile;
++ (NSInteger)podcastStreamingBitrateForCurrentNetwork;
++ (NSInteger)podcastDownloadBitrateForCurrentNetwork;
++ (NSInteger)podcastStreamingBitrateForWiFi;
++ (NSInteger)podcastStreamingBitrateForMobile;
++ (NSInteger)podcastDownloadBitrateForWiFi;
++ (NSInteger)podcastDownloadBitrateForMobile;
 + (void)setStreamingBitrate:(NSInteger)bitrate forWiFi:(BOOL)wifi;
 + (void)setDownloadBitrate:(NSInteger)bitrate forWiFi:(BOOL)wifi;
++ (void)setPodcastStreamingBitrate:(NSInteger)bitrate forWiFi:(BOOL)wifi;
++ (void)setPodcastDownloadBitrate:(NSInteger)bitrate forWiFi:(BOOL)wifi;
 + (NSString *)labelForBitrate:(NSInteger)bitrate;
 + (NSString *)streamingSummary;
 + (NSString *)downloadSummary;
++ (NSString *)podcastStreamingSummary;
++ (NSString *)podcastDownloadSummary;
 @end

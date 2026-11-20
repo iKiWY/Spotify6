@@ -62,7 +62,7 @@
       @{@"title":L(@"Skin"),@"footer":@"",
         @"rows":@[@{@"kind":@"link",@"title":L(@"Skin"),@"key":@"skin",@"detail":[SpotTheme ios6]?@"Classic iOS":@"Spotify"}]},
       @{ @"title":L(@"Audio"),@"footer":@"",
-        @"rows":@[@{@"kind":@"link",@"title":L(@"Media Quality"),@"key":@"mediaQuality",@"detail":[MMMediaQuality streamingSummary]},
+        @"rows":@[@{@"kind":@"link",@"title":L(@"Media Quality"),@"key":@"mediaQuality",@"detail":L(@"Music and Podcasts")},
                   @{@"kind":@"link",@"title":L(@"Equalizer"),@"key":@"equalizer",@"detail":[self equalizerDetail]}]},
       @{@"title":L(@"Notification Center"),@"footer":L(@"Shows the current song with play, back and next in Notification Center."),
         @"rows":@[@{@"kind":@"switch",@"title":L(@"Now playing widget"),@"key":@"ncw"}]},
