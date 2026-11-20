@@ -7,7 +7,7 @@
 #import "MMCovers.h"
 #import "MeshL10n.h"
 
-@interface MMDownloadsController () <UITableViewDataSource, UITableViewDelegate>
+@interface MMDownloadsController () <UITableViewDataSource, UITableViewDelegate, UIAlertViewDelegate>
 @end
 
 @implementation MMDownloadsController {
@@ -40,7 +40,7 @@
     _hint.font=[SpotTheme sub]; _hint.textAlignment=NSTextAlignmentCenter; _hint.backgroundColor=[UIColor clearColor]; _hint.hidden=YES; [self.view addSubview:_hint];
 
     _info=[NSMutableDictionary dictionary]; _asked=[NSMutableSet set];
-    for(NSString*n in @[@"MMDownloadProgress",@"MMDownloadDone",@"MMDownloadsChanged"])
+    for(NSString*n in @[@"MMDownloadProgress",@"MMDownloadDone",@"MMDownloadsChanged",@"MMDownloadQueueChanged",@"MMDownloadQueueCancelled"])
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(reload) name:n object:nil];
     [self reload];
     [self loadKnownInfo];
@@ -56,7 +56,7 @@
     [_table reloadData];
     [self fetchMissingInfo];
 }
-- (NSArray *)queue { return [MMSpotify isDownloading]?_status[@"queue"]:@[]; }
+- (NSArray *)queue { return _status[@"queue"]?:@[]; }
 
 // Titel/Artist/Cover: erst aus den gespeicherten Listen (geht offline), was fehlt übers Netz
 - (void)loadKnownInfo {
@@ -96,6 +96,7 @@ static NSString* fmtEta(double s){
     if(s==0){ NSInteger q=[self queue].count; return q?1+MIN(q,(NSInteger)50):0; }   // Fortschrittszeile + die nächsten 50
     return _done.count;
 }
+- (CGFloat)tableView:(UITableView *)tv heightForRowAtIndexPath:(NSIndexPath *)ip { return ip.section==0 && ip.row==0?88:60; }
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s { return [self tableView:tv numberOfRowsInSection:s]?([SpotTheme ios6]?22:36):0; }
 - (UIView *)tableView:(UITableView *)tv viewForHeaderInSection:(NSInteger)s {
     if([SpotTheme ios6]) return [SpotTheme plainSectionHeader:s==0?L(@"Downloading"):LF(@"Downloaded · %lu songs · %@",(unsigned long)_done.count,[MMTrackListController fmtBytes:_doneBytes]) width:tv.bounds.size.width];
@@ -111,11 +112,19 @@ static NSString* fmtEta(double s){
         UITableViewCell*c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
         c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
         NSInteger d=[_status[@"done"] integerValue], t=[_status[@"total"] integerValue];
-        UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(16,10,W-32,20)]; l.backgroundColor=[UIColor clearColor]; l.font=[UIFont systemFontOfSize:14]; l.textColor=[SpotTheme muted];
+        BOOL paused=[_status[@"paused"] boolValue];
+        UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(16,5,W-32,20)]; l.backgroundColor=[UIColor clearColor]; l.font=[UIFont systemFontOfSize:14]; l.textColor=[SpotTheme muted];
         NSString*eta=fmtEta([_status[@"eta"] doubleValue]);
-        l.text=eta?LF(@"%ld of %ld songs · %@",(long)d,(long)t,eta):LF(@"%ld of %ld songs",(long)d,(long)t); [c.contentView addSubview:l];
-        UIProgressView*p=[[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault]; p.frame=CGRectMake(16,40,W-32,9);
+        l.text=paused?LF(@"Paused · %ld of %ld songs",(long)d,(long)t):(eta?LF(@"%ld of %ld songs · %@",(long)d,(long)t,eta):LF(@"%ld of %ld songs",(long)d,(long)t)); [c.contentView addSubview:l];
+        UIProgressView*p=[[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault]; p.frame=CGRectMake(16,29,W-32,9);
         p.progressTintColor=[SpotTheme green]; p.trackTintColor=[SpotTheme card]; p.progress=t?(float)d/t:0; [c.contentView addSubview:p];
+        CGFloat gap=10, bw=(W-32-gap)/2;
+        UIButton *pause=[UIButton buttonWithType:UIButtonTypeRoundedRect]; pause.frame=CGRectMake(16,48,bw,34);
+        [pause setTitle:paused?L(@"Resume"):L(@"Pause") forState:UIControlStateNormal]; [pause setTitleColor:[SpotTheme green] forState:UIControlStateNormal];
+        pause.tag=paused?1:0; pause.titleLabel.font=[UIFont systemFontOfSize:14]; [pause addTarget:self action:@selector(toggleQueuePause:) forControlEvents:UIControlEventTouchUpInside]; [c.contentView addSubview:pause];
+        UIButton *cancel=[UIButton buttonWithType:UIButtonTypeRoundedRect]; cancel.frame=CGRectMake(16+bw+gap,48,bw,34);
+        [cancel setTitle:L(@"Cancel queue") forState:UIControlStateNormal]; [cancel setTitleColor:[SpotTheme muted] forState:UIControlStateNormal];
+        cancel.titleLabel.font=[UIFont systemFontOfSize:14]; [cancel addTarget:self action:@selector(confirmCancelQueue) forControlEvents:UIControlEventTouchUpInside]; [c.contentView addSubview:cancel];
         return c;
     }
     UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:MMCellID(@"s",tv)];
@@ -130,13 +139,20 @@ static NSString* fmtEta(double s){
     else { NSDictionary*d=_done[ip.row]; tid=d[@"id"]; size=[MMTrackListController fmtBytes:[d[@"bytes"] longLongValue]]; }
     NSDictionary*in=_info[tid];
     ((UILabel*)[c.contentView viewWithTag:2]).text=[in[@"title"] length]?in[@"title"]:L(@"Loading …");
-    ((UILabel*)[c.contentView viewWithTag:3]).text=ip.section==0?(now?L(@"Downloading now"):L(@"Waiting")):(in[@"artist"]?:@"");
+    BOOL paused=[_status[@"paused"] boolValue];
+    ((UILabel*)[c.contentView viewWithTag:3]).text=ip.section==0?(paused&&now?L(@"Paused"):now?L(@"Downloading now"):L(@"Waiting")):(in[@"artist"]?:@"");
     ((UILabel*)[c.contentView viewWithTag:4]).text=size;
-    UIActivityIndicatorView*sp=(UIActivityIndicatorView*)[c.contentView viewWithTag:5]; if(now)[sp startAnimating]; else [sp stopAnimating];
+    UIActivityIndicatorView*sp=(UIActivityIndicatorView*)[c.contentView viewWithTag:5]; if(now&&!paused)[sp startAnimating]; else [sp stopAnimating];
     UIImageView*cov=(UIImageView*)[c.contentView viewWithTag:1]; cov.image=nil;
     if([in[@"cover"] length]) [MMCovers thumb:in[@"cover"] size:44 radius:0 into:cov];
     return c;
 }
+- (void)toggleQueuePause:(UIButton *)sender { if(sender.tag)[MMSpotify resumeDownloadQueue]; else [MMSpotify pauseDownloadQueue]; }
+- (void)confirmCancelQueue {
+    UIAlertView *alert=[[UIAlertView alloc] initWithTitle:L(@"Cancel downloads?") message:L(@"This stops the remaining queue. Songs already downloaded stay on your phone.") delegate:self cancelButtonTitle:L(@"Keep queue") otherButtonTitles:L(@"Cancel queue"),nil];
+    alert.tag=731; [alert show];
+}
+- (void)alertView:(UIAlertView *)alert clickedButtonAtIndex:(NSInteger)buttonIndex { if(alert.tag==731 && buttonIndex==1)[MMSpotify cancelDownloadQueue]; }
 // Nach links wischen: heruntergeladenen Song löschen
 - (BOOL)tableView:(UITableView *)tv canEditRowAtIndexPath:(NSIndexPath *)ip { return ip.section==1; }
 - (NSString *)tableView:(UITableView *)tv titleForDeleteConfirmationButtonForRowAtIndexPath:(NSIndexPath *)ip { return L(@"Delete"); }

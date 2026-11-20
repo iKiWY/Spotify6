@@ -36,12 +36,15 @@ void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Librar
 // Reiht Tracks in die globale Download-Warteschlange ein (mehrere Playlists nacheinander).
 // Status per Notification: MMDownloadProgress {done,total} · MMDownloadDone {ok} · MMDownloadFull
 + (void)queueDownloadTracks:(NSArray *)trackIds;
++ (void)pauseDownloadQueue;
++ (void)resumeDownloadQueue;
++ (void)cancelDownloadQueue;
 + (void)removeDownloads:(NSArray *)trackIds;
 // Offline-Playlists dauerhaft merken -> beim Start werden fehlende Tracks automatisch weitergeladen.
 + (void)markOffline:(NSString *)name trackIds:(NSArray *)trackIds;
 + (void)unmarkOffline:(NSArray *)trackIds;
 + (void)resumeOfflineDownloads;   // beim App-Start aufrufen
-+ (NSDictionary *)downloadStatus;   // {queue: noch zu ladende IDs (erste = gerade), done, total, eta: Sekunden oder -1}
++ (NSDictionary *)downloadStatus;   // {queue, done, total, eta, paused, running}
 + (NSArray *)downloadedTracks;      // @[ {id, bytes, date} ], neueste zuerst
 + (void)deleteDownload:(NSString *)trackId;   // Datei weg + aus den Offline-Listen (kein Auto-Resume)
 + (void)trackInfos:(NSArray *)trackIds completion:(void(^)(NSDictionary *byId))done;   // {id: {title, artist, cover}} übers Netz

@@ -208,3 +208,13 @@
 "Cover Flow in sidebar" = "Cover Flow in sidebar";
 "Album/playlist page covers" = "Album/playlist page covers";
 "Search key" = "Search key";
+
+/* Download queue controls */
+"Pause" = "Pause";
+"Resume" = "Resume";
+"Cancel queue" = "Cancel queue";
+"Paused · %ld of %ld songs" = "Paused · %ld of %ld songs";
+"Paused" = "Paused";
+"Cancel downloads?" = "Cancel downloads?";
+"This stops the remaining queue. Songs already downloaded stay on your phone." = "This stops the remaining queue. Songs already downloaded stay on your phone.";
+"Keep queue" = "Keep queue";
