@@ -1,10 +1,12 @@
 #import "MMCovers.h"
 #import <objc/runtime.h>
 #import "MMSpotify.h"
+#import "SpotTheme.h"
 #import <CommonCrypto/CommonDigest.h>
 #import <unistd.h>
 #import <sys/stat.h>
 #import <sys/time.h>
+#import <limits.h>
 
 @implementation MMCovers
 
@@ -84,6 +86,22 @@ static void dedupeExisting(void){
     return [u isKindOfClass:[NSString class]]?u:@"";
 }
 
++ (NSString *)smallURL:(id)images {
+    if(![images isKindOfClass:[NSArray class]] || ![images count]) return @"";
+    NSDictionary *small=nil; long long smallArea=LLONG_MAX;
+    for(id item in images){
+        if(![item isKindOfClass:[NSDictionary class]]) continue;
+        id width=item[@"width"], height=item[@"height"];
+        long long w=[width respondsToSelector:@selector(longLongValue)]?[width longLongValue]:0;
+        long long h=[height respondsToSelector:@selector(longLongValue)]?[height longLongValue]:0;
+        long long area=(w>0 && h>0)?w*h:LLONG_MAX-1;
+        if(!small || area<smallArea){ small=item; smallArea=area; }
+    }
+    if(!small) small=[images lastObject];
+    id url=small[@"url"];
+    return [url isKindOfClass:[NSString class]]?url:@"";
+}
+
 + (UIImage *)cached:(NSString *)url { return url.length?[gRam() objectForKey:url]:nil; }
 + (BOOL)onDisk:(NSString *)url { return url.length && [[NSFileManager defaultManager] fileExistsAtPath:diskPath(url)]; }
 
@@ -135,10 +153,10 @@ static dispatch_queue_t gPre(void){ static dispatch_queue_t q; static dispatch_o
 
 + (void)load:(NSString *)url into:(UIImageView *)iv {
     if(!iv) return;
+    objc_setAssociatedObject(iv, @selector(image), url, OBJC_ASSOCIATION_COPY_NONATOMIC);
     UIImage*ram=[gRam() objectForKey:url];
     if(ram){ iv.image=ram; touchCover(url); return; }
-    // Reuse-Schutz: merke die URL am ImageView, setze Bild nur wenn noch dieselbe
-    objc_setAssociatedObject(iv, @selector(image), url, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    // Reuse-Schutz: setze das Bild nur, wenn noch dieselbe URL gefragt ist.
     [self load:url completion:^(UIImage*img){
         if(img && [objc_getAssociatedObject(iv, @selector(image)) isEqualToString:url]) iv.image=img;
     }];
@@ -178,10 +196,32 @@ static NSCache *gThumbs(void){ static NSCache*c; static dispatch_once_t o; dispa
 }
 // ---- Mosaik für Playlists ohne eigenes Bild ----
 static NSString *mosaicMemo(void){ return MMPath(@".spotcache/plcovers.plist"); }
+static NSMutableDictionary *gPlaylistMemo, *gPlaylistWaiting, *gPlaylistGenerations;
+static void playlistMemoInit(void){
+    if(gPlaylistMemo) return;
+    gPlaylistMemo=[[NSDictionary dictionaryWithContentsOfFile:mosaicMemo()] mutableCopy]?:[NSMutableDictionary dictionary];
+    gPlaylistWaiting=[NSMutableDictionary dictionary]; gPlaylistGenerations=[NSMutableDictionary dictionary];
+}
++ (void)playlistPlaceholderInto:(UIImageView *)iv {
+    if(!iv)return;
+    // Cancel pending image callbacks when a reused cell becomes a different playlist.
+    objc_setAssociatedObject(iv,@selector(image),nil,OBJC_ASSOCIATION_COPY_NONATOMIC);
+    iv.image=[SpotTheme playlistPlaceholder:MAX(1,iv.bounds.size.width)];
+}
++ (void)invalidateEmptyPlaylistCover:(NSString *)pid {
+    if(!pid.length)return; playlistMemoInit();
+    NSDictionary*entry=gPlaylistMemo[pid];
+    if(entry && ![entry[@"url"] length]) [self invalidatePlaylistCover:pid];
+}
++ (void)invalidatePlaylistCover:(NSString *)pid {
+    if(!pid.length) return; playlistMemoInit();
+    [gPlaylistMemo removeObjectForKey:pid];
+    gPlaylistGenerations[pid]=@([gPlaylistGenerations[pid] unsignedIntegerValue]+1);
+    [gPlaylistMemo writeToFile:mosaicMemo() atomically:YES];
+}
 + (void)playlistCover:(NSString *)pid completion:(void(^)(NSString *))done {
     if(!pid.length){ if(done)done(nil); return; }
-    static NSMutableDictionary*memo; static NSMutableDictionary*waiting;
-    if(!memo){ memo=[[NSDictionary dictionaryWithContentsOfFile:mosaicMemo()] mutableCopy]?:[NSMutableDictionary dictionary]; waiting=[NSMutableDictionary dictionary]; }
+    playlistMemoInit(); NSMutableDictionary*memo=gPlaylistMemo, *waiting=gPlaylistWaiting;
     NSDictionary*m=memo[pid];
     NSString*mu=m[@"url"];
     // Mosaik-Dateien liegen im App-Ordner, dessen Name sich bei jedem Update ändert -> gemerkten Pfad auf den aktuellen Ordner umbiegen
@@ -192,7 +232,13 @@ static NSString *mosaicMemo(void){ return MMPath(@".spotcache/plcovers.plist"); 
     if(m && !fileGone && age<(mu.length?7*86400:3600)){ if(done)done(mu.length?mu:nil); return; }   // Treffer eine Woche merken, Fehlschlag (z.B. offline) nur 1 h
     if(waiting[pid]){ if(done)[waiting[pid] addObject:[done copy]]; return; }   // schon unterwegs -> mitwarten
     waiting[pid]=[NSMutableArray array]; if(done)[waiting[pid] addObject:[done copy]];
+    NSUInteger generation=[gPlaylistGenerations[pid] unsignedIntegerValue];
     void (^finish)(NSString*)=^(NSString*url){
+        if(generation!=[gPlaylistGenerations[pid] unsignedIntegerValue]){
+            NSArray*cbs=waiting[pid]; [waiting removeObjectForKey:pid];
+            for(void(^cb)(NSString*) in cbs) [self playlistCover:pid completion:cb];
+            return;
+        }
         memo[pid]=@{@"url":url?:@"",@"t":@([[NSDate date] timeIntervalSince1970])};
         [memo writeToFile:mosaicMemo() atomically:YES];
         NSArray*cbs=waiting[pid]; [waiting removeObjectForKey:pid];

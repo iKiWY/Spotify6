@@ -3,14 +3,19 @@
 #import "MMLayout.h"
 #import "MMArtistController.h"
 #import <objc/runtime.h>
+#import <limits.h>
 static char kRowKey;   // Zeilennummer am Artist-Label (Album-Seite)
 #import "MMSpotify.h"
+#import "MMMediaQuality.h"
 #import "MMRootController.h"
 #import "MMCovers.h"
 #import "MeshL10n.h"
 #import "MMSongMenu.h"
+#import "MMSheet.h"
+#import "MMPlaylistEditor.h"
 
 @interface MMTrackListController () <UITableViewDataSource, UITableViewDelegate, UIAlertViewDelegate>
+- (BOOL)isPodcastEpisodes;
 @end
 
 @implementation MMTrackListController {
@@ -21,6 +26,7 @@ static char kRowKey;   // Zeilennummer am Artist-Label (Album-Seite)
     NSCache *_imgCache;
     UIButton *_offBtn; UIActivityIndicatorView *_offSpin; UIColor *_grn;   // Offline-Knopf oben rechts
     NSString *_nextPath;       // relativer Pfad der nächsten Seite (nil = fertig)
+    NSUInteger _loadGeneration;
     BOOL _loadingPage, _firstDone;
     BOOL _showingCache;        // gerade wird die gespeicherte Liste gezeigt, erste frische Seite steht noch aus
     NSArray *_allIds;          // vollständige ID-Liste (für Download der GANZEN Playlist)
@@ -33,6 +39,9 @@ static char kRowKey;   // Zeilennummer am Artist-Label (Album-Seite)
     NSDictionary *_meta;       // Kopf-Daten der ersten Seite: name, images, artists, release_date, description, owner
     NSUInteger _total;         // Titel insgesamt laut Spotify
     UIImageView *_hCover; UILabel *_hTitle, *_hSub, *_hInfo;
+    BOOL _playlistBusy, _playLoading;
+    UIButton *_playButton, *_shuffleButton, *_actionsButton;
+    UILabel *_navTitle;
     BOOL _dlRunning;           // nach "Speichern" läuft der Download dieser Liste -> Kreisel statt Knopf
 }
 + (BOOL)coverStyle { id v=[[NSUserDefaults standardUserDefaults] objectForKey:@"listCoverStyle"]; return v?[v boolValue]:YES; }   // Standard: an (wer es ausgeschaltet hat, behält aus)
@@ -54,14 +63,15 @@ static char kRowKey;   // Zeilennummer am Artist-Label (Album-Seite)
     [back addTarget:self action:@selector(close) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:back];
 
     UILabel*nav=[[UILabel alloc] initWithFrame:CGRectMake(70,8,W-140,34)];
-    nav.text=_title; nav.font=[UIFont boldSystemFontOfSize:16]; nav.textColor=[SpotTheme ink]; nav.textAlignment=NSTextAlignmentCenter; nav.adjustsFontSizeToFitWidth=YES; [self.view addSubview:nav];
+    _navTitle=nav; nav.text=_title; nav.font=[UIFont boldSystemFontOfSize:16]; nav.textColor=[SpotTheme ink]; nav.textAlignment=NSTextAlignmentCenter; nav.adjustsFontSizeToFitWidth=YES; [self.view addSubview:nav];
 
     // --- Offline-Knopf oben rechts (gegenüber von Zurück); fragt vor dem Speichern und vor dem Entfernen nach ---
     _grn=[UIColor colorWithRed:0.11 green:0.73 blue:0.33 alpha:1];
     _offBtn=[UIButton buttonWithType:UIButtonTypeCustom]; _offBtn.frame=CGRectMake(W-52,8,44,34);
     _offBtn.hidden=YES; [self.view addSubview:_offBtn];
     if([self isDownloads]){ [_offBtn setImage:shuffleIcon() forState:UIControlStateNormal]; [_offBtn addTarget:self action:@selector(shufflePlay) forControlEvents:UIControlEventTouchUpInside]; }   // "Heruntergeladen": Zufallswiedergabe statt Download
-    else [_offBtn addTarget:self action:@selector(toggleDownload) forControlEvents:UIControlEventTouchUpInside];
+    else if([_path hasPrefix:@"me/tracks"]){ [_offBtn setTitle:@"↻" forState:UIControlStateNormal]; [_offBtn setTitleColor:_grn forState:UIControlStateNormal]; _offBtn.titleLabel.font=[UIFont boldSystemFontOfSize:24]; [_offBtn addTarget:self action:@selector(renewLiked) forControlEvents:UIControlEventTouchUpInside]; }
+    else if(![self isPodcastEpisodes]) [_offBtn addTarget:self action:@selector(toggleDownload) forControlEvents:UIControlEventTouchUpInside];
     _offSpin=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
     _offSpin.center=_offBtn.center; _offSpin.hidesWhenStopped=YES; [self.view addSubview:_offSpin];
 
@@ -72,9 +82,11 @@ static char kRowKey;   // Zeilennummer am Artist-Label (Album-Seite)
     [self.view addSubview:_table];
 
     if(_coverStyle) [self buildHeader];
-    _hint=[[UILabel alloc] initWithFrame:CGRectMake(20,_coverStyle?190:110,W-40,40)]; _hint.textColor=[SpotTheme faint]; _hint.font=[SpotTheme sub]; _hint.textAlignment=NSTextAlignmentCenter; [self.view addSubview:_hint];
+    if([self playlistId]) [self buildPlaylistControls];
+    CGFloat messageY=_table.frame.origin.y+_table.tableHeaderView.bounds.size.height+12;
+    _hint=[[UILabel alloc] initWithFrame:CGRectMake(20,messageY,W-40,40)]; _hint.textColor=[SpotTheme faint]; _hint.font=[SpotTheme sub]; _hint.textAlignment=NSTextAlignmentCenter; [self.view addSubview:_hint];
     _spin=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
-    _spin.center=CGPointMake(W/2,_coverStyle?210:90); _spin.hidesWhenStopped=YES; [_spin startAnimating]; [self.view addSubview:_spin];
+    _spin.center=CGPointMake(W/2,messageY+20); _spin.hidesWhenStopped=YES; [_spin startAnimating]; [self.view addSubview:_spin];
 
     __weak MMTrackListController*ws=self;   // lange drücken: Als Nächstes / Warteschlange / Lieblingssongs / Playlist
     [MMSongMenu attachToTable:_table swipeToQueue:YES trackAt:^NSDictionary*(NSIndexPath*ip){ MMTrackListController*s=ws; return (s && ip.row<(NSInteger)s->_tracks.count)?s->_tracks[ip.row]:nil; }];
@@ -83,8 +95,111 @@ static char kRowKey;   // Zeilennummer am Artist-Label (Album-Seite)
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlRefresh) name:@"MMDownloadsChanged" object:nil];
     for(NSString*n in @[@"MMDownloadFull",@"MMDownloadError"]) [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlStopped) name:n object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(netChanged) name:@"MMNetworkChanged" object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(playlistTracksChanged:) name:@"MMPlaylistTracksChanged" object:nil];
     [self load];
     MMAutoMask(self.view);   // iPad: Unteransichten folgen der Breite beim Drehen
+}
+
+- (void)playlistTracksChanged:(NSNotification *)notification {
+    if(![[self playlistId] isEqual:notification.object]) return;
+    [[NSFileManager defaultManager] removeItemAtPath:[self listPath] error:NULL];
+    [[NSFileManager defaultManager] removeItemAtPath:[self partPath] error:NULL];
+    [MMCovers playlistPlaceholderInto:_hCover];
+    [_spin startAnimating]; _hint.hidden=YES; [self load];
+}
+- (NSString *)playlistId {
+    if(![_path hasPrefix:@"playlists/"]) return nil;
+    return [[[_path componentsSeparatedByString:@"?"][0] componentsSeparatedByString:@"/"] objectAtIndex:1];
+}
+- (void)buildPlaylistControls {
+    CGFloat W=self.view.bounds.size.width;
+    UIView*h=_table.tableHeaderView;
+    if(!h) h=[[UIView alloc] initWithFrame:CGRectMake(0,0,W,0)];
+    BOOL classic=[SpotTheme ios6];
+    CGFloat y=h.bounds.size.height; CGRect f=h.frame; f.size.height=y+(classic?48:52); h.frame=f;
+    NSArray*titles=@[L(@"Play"),L(@"Shuffle"),L(@"More …")];
+    SEL actions[]={@selector(playInOrder),@selector(shufflePlaylist),@selector(playlistActions)};
+    for(NSUInteger i=0;i<3;i++){
+        CGFloat width=classic?MIN(86,(W-48)/3):(W-24)/3-6;
+        CGFloat left=classic?(W-(width*3+16))/2:12;
+        UIButton*b=[UIButton buttonWithType:UIButtonTypeCustom]; b.frame=CGRectMake(left+i*(width+(classic?8:6)),y+(classic?0:4),width,classic?44:40);
+        [b setTitle:titles[i] forState:UIControlStateNormal]; [SpotTheme styleActionButton:b primary:i==0];
+        b.titleLabel.adjustsFontSizeToFitWidth=YES;
+        [b addTarget:self action:actions[i] forControlEvents:UIControlEventTouchUpInside]; [h addSubview:b];
+        if(i==0) _playButton=b; else if(i==1) _shuffleButton=b; else _actionsButton=b;
+    }
+    MMAutoMask(h); _table.tableHeaderView=h;
+}
+- (void)playlistActions {
+    if(_playlistBusy) return;
+    _playlistBusy=YES; _actionsButton.enabled=NO;
+    [MMSpotify isPlaylistSaved:[self playlistId] completion:^(BOOL saved,BOOL known){
+        _playlistBusy=NO; _actionsButton.enabled=YES;
+        if(!known){ [[MMRootController shared] showDownloadMessage:L(@"Couldn't load (offline?).")]; return; }
+        NSString*saveTitle=saved?L(@"Remove from Library"):L(@"Save to Library");
+        NSMutableArray*options=[NSMutableArray arrayWithObject:saveTitle];
+        if([_meta[@"owner"][@"id"] isEqual:[MMSpotify username]]) [options addObject:L(@"Rename playlist")];
+        [MMSheet showIn:[MMRootController shared].view title:_meta[@"name"]?:_title subtitle:L(@"Playlist")
+            imageURL:[MMCovers bestURL:_meta[@"images"]] options:options done:^(NSInteger i){
+            if(i<0 || _playlistBusy) return;
+            if(i==0){
+                if(saved){
+                    [MMSheet showIn:[MMRootController shared].view title:L(@"Remove from Library?") subtitle:_meta[@"name"]?:_title
+                        options:@[L(@"Remove")] done:^(NSInteger k){ if(k==0) [self savePlaylist:NO]; }];
+                } else [self savePlaylist:YES];
+            } else {
+                [MMPlaylistEditor rename:[self playlistId] name:_meta[@"name"]?:_title completion:^(NSString*name){
+                    _title=name; _navTitle.text=name; NSMutableDictionary*m=[_meta mutableCopy]?:[NSMutableDictionary dictionary];
+                    m[@"name"]=name; _meta=m; [self updateHeader];
+                    [@{@"meta":m,@"total":@(_total)} writeToFile:[self metaPath] atomically:YES];
+                }];
+            }
+        }];
+    }];
+}
+- (void)savePlaylist:(BOOL)saved {
+    if(_playlistBusy) return;
+    _playlistBusy=YES; _actionsButton.enabled=NO;
+    [MMSpotify setPlaylistSaved:saved playlist:[self playlistId] completion:^(BOOL ok){
+        _playlistBusy=NO; _actionsButton.enabled=YES;
+        [[MMRootController shared] showDownloadMessage:!ok?L(@"Couldn't save – please try again"):saved?L(@"Saved to Library"):L(@"Removed from Library")];
+    }];
+}
+- (void)playInOrder { [self playPlaylistShuffled:NO startIndex:-1]; }
+- (void)shufflePlaylist { [self playPlaylistShuffled:YES startIndex:-1]; }
+- (void)playPlaylistShuffled:(BOOL)shuffle startIndex:(NSInteger)startIndex {
+    if(_playLoading || (_loadingPage && !_offline)) return;
+    // Explicit play actions use every page, not just the rows scrolled into view.
+    if(!_offline && (_nextPath || _fromPart || !_firstDone)){
+        NSArray*before=[self playableTracks];
+        NSString*selectedId=(startIndex>=0 && startIndex<(NSInteger)before.count)?before[startIndex][@"id"]:nil;
+        _playLoading=YES; _playButton.enabled=NO; _shuffleButton.enabled=NO;
+        [[MMRootController shared] showDownloadMessage:L(@"Loading track list …")];
+        NSUInteger generation=_loadGeneration;
+        [MMSpotify apiUserAllItems:_path completion:^(NSArray*items,NSInteger st){
+            if(generation!=_loadGeneration) return;
+            _playLoading=NO; _playButton.enabled=YES; _shuffleButton.enabled=YES;
+            if(!items || st<200 || st>=300){ [[MMRootController shared] showDownloadMessage:L(@"Couldn't load tracks.")]; return; }
+            _tracks=[[self parseItems:items] mutableCopy]; _nextPath=nil; _fromPart=NO; _firstDone=YES;
+            _allIds=[_tracks valueForKey:@"id"]; [_tracks writeToFile:[self listPath] atomically:YES];
+            [[NSFileManager defaultManager] removeItemAtPath:[self partPath] error:NULL];
+            _hint.hidden=(_tracks.count>0);
+            [_table reloadData]; [self updateHeader]; [self updateDlState];
+            NSInteger selectedIndex=startIndex;
+            if(selectedId){
+                selectedIndex=-1; NSArray*playable=[self playableTracks];
+                for(NSUInteger i=0;i<playable.count;i++) if([playable[i][@"id"] isEqual:selectedId]){ selectedIndex=(NSInteger)i; break; }
+                if(selectedIndex<0){ [[MMRootController shared] showDownloadMessage:L(@"No playable songs.")]; return; }
+            }
+            [self playPlaylistShuffled:shuffle startIndex:selectedIndex];
+        }]; return;
+    }
+    NSArray*list=[self playableTracks];
+    if(!list.count){ [[MMRootController shared] showDownloadMessage:L(@"No playable songs.")]; return; }
+    NSInteger index=startIndex>=0?startIndex:shuffle?(NSInteger)arc4random_uniform((u_int32_t)list.count):0;
+    if(index>=(NSInteger)list.count) return;
+    MMRootController*r=[MMRootController shared]; [r setShuffle:shuffle];
+    [r playList:list index:index context:[self context]];
 }
 
 // ---- Kopf der Cover-Ansicht ----
@@ -94,6 +209,7 @@ static char kRowKey;   // Zeilennummer am Artist-Label (Album-Seite)
     UIView*h=[[UIView alloc] initWithFrame:CGRectMake(0,0,W,side+18)];
     BOOL six=[SpotTheme ios6]; if(six) h.frame=CGRectMake(0,0,W,side+22);   // iOS 6: Platz für das Spiegelbild
     _hCover=[SpotTheme shelfCover:CGRectMake(16,6,side,side) in:h reflection:six?13:0 fade:[UIColor colorWithWhite:0.90 alpha:1]]; _hCover.backgroundColor=[SpotTheme card];
+    if([self playlistId]) [MMCovers playlistPlaceholderInto:_hCover];
     _hTitle=[[UILabel alloc] initWithFrame:CGRectMake(x,8,tw,44)]; _hTitle.font=[UIFont boldSystemFontOfSize:18]; _hTitle.textColor=[SpotTheme ink];
     _hTitle.numberOfLines=2; _hTitle.backgroundColor=[UIColor clearColor]; [h addSubview:_hTitle];
     _hSub=[[UILabel alloc] initWithFrame:CGRectMake(x,54,tw,32)]; _hSub.font=[UIFont boldSystemFontOfSize:12]; _hSub.textColor=[SpotTheme ink];
@@ -124,19 +240,19 @@ static NSString* fmtDuration(long long ms){
 }
 - (void)updateHeader {
     if(!_hCover) return;
-    BOOL liked=[_path hasPrefix:@"me/tracks"], album=[_path hasPrefix:@"albums/"];
+    BOOL liked=[_path hasPrefix:@"me/tracks"], album=[_path hasPrefix:@"albums/"], episodes=[self isPodcastEpisodes];
     _hTitle.text=[_meta[@"name"] length]?_meta[@"name"]:_title;
     // Untertitel: Album -> Artist; Playlist -> Beschreibung (sonst "Spotify" bei Spotify-Listen)
     NSString*sub=@"";
     if(album){ NSArray*a=_meta[@"artists"]; if([a isKindOfClass:[NSArray class]]&&a.count&&[a[0][@"name"] isKindOfClass:[NSString class]]) sub=a[0][@"name"]; }
-    else if(!liked){ sub=stripTags(_meta[@"description"]); if(!sub.length && [_meta[@"owner"][@"id"] isEqual:@"spotify"]) sub=@"Spotify"; }
+    else if(!liked && !episodes){ sub=stripTags(_meta[@"description"]); if(!sub.length && [_meta[@"owner"][@"id"] isEqual:@"spotify"]) sub=@"Spotify"; }
     _hSub.text=sub;
     // Infozeile: Art · Jahr · Anzahl, Dauer (Dauer erst, wenn alle Titel geladen sind)
-    NSMutableArray*parts=[NSMutableArray arrayWithObject:album?L(@"Album"):L(@"Playlist")];
+    NSMutableArray*parts=[NSMutableArray arrayWithObject:episodes?L(@"Podcast"):album?L(@"Album"):L(@"Playlist")];
     NSString*yr=[_meta[@"release_date"] isKindOfClass:[NSString class]]?_meta[@"release_date"]:nil; if(album && yr.length>=4) [parts addObject:[yr substringToIndex:4]];
     NSString*kind=[parts componentsJoinedByString:@" · "], *cnt=nil;
     NSUInteger n=_total?:_tracks.count;
-    if(n){ cnt=(n==1)?L(@"1 song"):[NSString stringWithFormat:L(@"%lu songs"),(unsigned long)n];
+    if(n){ cnt=episodes?(n==1?L(@"1 episode"):[NSString stringWithFormat:L(@"%lu episodes"),(unsigned long)n]):(n==1?L(@"1 song"):[NSString stringWithFormat:L(@"%lu songs"),(unsigned long)n]);
         // gespeicherte Teilliste: keine falsche Gesamtdauer
         long long ms=0; BOOL all=(!_nextPath && _tracks.count && !_fromPart); for(NSDictionary*t in _tracks) ms+=[t[@"dur"] longLongValue];
         if(all && ms>0) cnt=[cnt stringByAppendingFormat:@", %@",fmtDuration(ms)]; }
@@ -147,11 +263,15 @@ static NSString* fmtDuration(long long ms){
     [self layoutHeader];
     if(liked){ [MMCovers likedCoverInto:_hCover]; return; }
     if([self isDownloads]){ for(UIView*v in _hCover.subviews)[v removeFromSuperview]; _hCover.image=[SpotTheme downloadsCover:_hCover.bounds.size.width]; return; }
-    NSString*cu=[MMCovers bestURL:_meta[@"images"]]; if(!cu.length && _tracks.count && album) cu=_tracks[0][@"cover"];
+    NSString*cu=[MMCovers bestURL:_meta[@"images"]]; if(!cu.length && _tracks.count && (album||episodes)) cu=_tracks[0][@"cover"];
     if(cu.length){ for(UIView*v in _hCover.subviews)[v removeFromSuperview]; [MMCovers load:cu into:_hCover]; }
     // Playlist ohne eigenes Bild: Mosaik wie in der Bibliothek. Erst wenn die Kopf-Daten da sind (sonst gewann beim ersten
     // Öffnen das langsamere Mosaik gegen das echte Cover) und nur, wenn bis dahin kein echtes Bild aufgetaucht ist.
-    else if(!album && _meta && !_hCover.image){ __weak MMTrackListController*ws=self;
+    else if(!album && !episodes && _meta){ __weak MMTrackListController*ws=self;
+        if(_tracks.count){
+            [MMCovers invalidateEmptyPlaylistCover:[self playlistId]];
+            [MMCovers load:_tracks[0][@"cover"] into:_hCover];
+        }
         [MMCovers playlistCover:[[[_path componentsSeparatedByString:@"?"][0] componentsSeparatedByString:@"/"] lastObject] completion:^(NSString*mu){
             MMTrackListController*s=ws; if(mu.length && s && ![MMCovers bestURL:s->_meta[@"images"]].length) [MMCovers load:mu into:s->_hCover]; }]; }
 }
@@ -181,6 +301,8 @@ static NSString* fmtDuration(long long ms){
 - (NSString *)listPath { return [NSString stringWithFormat:@"%@/.spotcache/list_%lu.plist",MMDataDir(), (unsigned long)_path.hash]; }
 
 - (void)load {
+    _loadGeneration++; _loadingPage=NO; _playLoading=NO; _firstDone=NO; _nextPath=nil; _showingCache=NO; _allIds=nil;
+    _playButton.enabled=YES; _shuffleButton.enabled=YES;
     _tracks=[NSMutableArray array];
     _offline=![MMSpotify networkReachable];
     NSArray*cached=[self cachedList];   // zuletzt geladene Liste (komplett oder bis wohin gescrollt) sofort zeigen
@@ -199,26 +321,31 @@ static NSString* fmtDuration(long long ms){
         NSString*tid=[t[@"id"] isKindOfClass:[NSString class]]?t[@"id"]:nil;
         if(!tid) continue;   // NSNull/removed/local tracks überspringen
         NSString*nm=[t[@"name"] isKindOfClass:[NSString class]]?t[@"name"]:@"";
+        BOOL episode=[self isPodcastEpisodes];
         id arts=t[@"artists"]; NSString*an=@"";
+        if(episode) an=[t[@"show"] isKindOfClass:[NSDictionary class]] && [t[@"show"][@"name"] isKindOfClass:[NSString class]]?t[@"show"][@"name"]:_title?:@"";
         NSString*aid=@"";
         if([arts isKindOfClass:[NSArray class]] && [arts count]){ id a0=[arts objectAtIndex:0]; if([a0 isKindOfClass:[NSDictionary class]] && [a0[@"name"] isKindOfClass:[NSString class]]) an=a0[@"name"];
             if([a0 isKindOfClass:[NSDictionary class]] && [a0[@"id"] isKindOfClass:[NSString class]]) aid=a0[@"id"]; }
         id alb=t[@"album"]; NSString*cov=@"", *aln=@"";
-        if([alb isKindOfClass:[NSDictionary class]]){ cov=[MMCovers bestURL:alb[@"images"]];   // scharfes (mittleres) Cover
+        if([alb isKindOfClass:[NSDictionary class]]){ cov=[MMCovers smallURL:alb[@"images"]];   // kleines Cover für die schmale Titelliste
             if([alb[@"name"] isKindOfClass:[NSString class]]) aln=alb[@"name"]; }   // Album-Spalte (iPad)
+        if(episode){ cov=[MMCovers smallURL:t[@"images"]]?:@""; aln=an; }
         id dur=t[@"duration_ms"];
-        [out addObject:@{@"id":tid,@"title":nm,@"artist":an,@"artistId":aid,@"album":aln,@"cover":cov?:@"",@"dur":[dur isKindOfClass:[NSNumber class]]?dur:@0}];
+        [out addObject:@{@"id":tid,@"title":nm,@"artist":an,@"artistId":aid,@"album":aln,@"cover":cov?:@"",@"dur":[dur isKindOfClass:[NSNumber class]]?dur:@0,@"mediaType":episode?@"episode":@"track"}];
     }
     return out;
 }
 
 // Lädt EINE Seite (50–100 Titel). Beim Scrollen ans Ende wird die nächste nachgeladen.
 - (void)loadNextPage {
-    if(_loadingPage) return;
+    if(_loadingPage || _playLoading) return;
     if(_firstDone && !_nextPath) return;   // alles da
     _loadingPage=YES;
+    NSUInteger generation=_loadGeneration;
     NSString*p = _nextPath ?: _path;       // erste Seite = _path
     [MMSpotify apiUser:@"GET" path:p body:nil completion:^(NSDictionary*j,NSInteger st){
+        if(generation!=_loadGeneration) return;
         _loadingPage=YES;   // bleibt gesperrt bis fertig verarbeitet
         NSDictionary*page=[j isKindOfClass:[NSDictionary class]]?j:nil;
         if(page && [p isEqualToString:_path]){   // erste Seite: Kopf-Daten (Name, Bild, Artist, Jahr, Beschreibung) merken
@@ -299,6 +426,7 @@ static UIImage* offIcon(BOOL have, UIColor*grn){
     UIImage*img=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext(); return img;
 }
 - (BOOL)isDownloads { return [_path hasPrefix:@"me/downloads"]; }
+- (BOOL)isPodcastEpisodes { return [_path hasPrefix:@"shows/"] && [_path rangeOfString:@"/episodes"].location!=NSNotFound; }
 // Zufallswiedergabe der heruntergeladenen Songs: zufälliger Start, Rest gemischt
 - (void)shufflePlay {
     NSArray*list=[self playableTracks]; if(!list.count) return;
@@ -313,14 +441,79 @@ static UIImage* offIcon(BOOL have, UIColor*grn){
     if(!_tracks.count){ _offBtn.hidden=YES; return; }
     _offBtn.hidden=NO; _offBtn.enabled=YES;
     NSArray*ids=_allIds?:[_tracks valueForKey:@"id"];   // _allIds = vollständig (nach letzter Seite)
-    [_offBtn setImage:offIcon(_allIds && [MMSpotify allDownloaded:ids],_grn) forState:UIControlStateNormal];
+    if([_path hasPrefix:@"me/tracks"]) { [_offBtn setImage:nil forState:UIControlStateNormal]; [_offBtn setTitle:@"↻" forState:UIControlStateNormal]; }
+    else {
+        BOOL all=NO;
+        if(_allIds){
+            NSArray*checkIDs=ids;
+            if([self isPodcastEpisodes]){ NSMutableArray*q=[NSMutableArray array]; for(NSString*eid in ids) [q addObject:[@"episode:" stringByAppendingString:eid]]; checkIDs=q; }
+            all=[MMSpotify allDownloaded:checkIDs];
+        }
+        [_offBtn setImage:offIcon(all,_grn) forState:UIControlStateNormal];
+    }
+}
+- (void)renewLiked {
+    if(![_path hasPrefix:@"me/tracks"]) return;
+    if(_loadingPage) { [[[UIAlertView alloc] initWithTitle:@"Curtidas carregando" message:@"Espere a lista de músicas terminar de carregar e toque na seta novamente." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show]; return; }
+    if(![MMSpotify wifiReachable]) { [[[UIAlertView alloc] initWithTitle:@"Wi‑Fi necessário" message:@"Conecte-se ao Wi‑Fi para renovar a seleção offline." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show]; return; }
+    if([MMSpotify isDownloading]) { [[[UIAlertView alloc] initWithTitle:@"Downloads em andamento" message:@"Espere a fila atual terminar antes de renovar a seleção diária." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show]; return; }
+    _offBtn.hidden=YES; [_offSpin startAnimating];
+    [MMSpotify apiUserAllItems:_path completion:^(NSArray*items,NSInteger status){
+        if([MMSpotify isDownloading]) { [_offSpin stopAnimating]; _offBtn.hidden=NO; [[[UIAlertView alloc] initWithTitle:@"Downloads em andamento" message:@"A fila mudou enquanto as curtidas eram carregadas. Tente de novo quando terminar." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show]; return; }
+        if(status<200 || status>=300){ [_offSpin stopAnimating]; _offBtn.hidden=NO; [[[UIAlertView alloc] initWithTitle:@"Não foi possível renovar" message:@"Confira sua conexão e tente novamente." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show]; return; }
+        NSMutableArray*pool=[NSMutableArray array];
+        for(id item in items){ if(![item isKindOfClass:[NSDictionary class]]) continue; id t=item[@"track"]; if(![t isKindOfClass:[NSDictionary class]]) t=item;
+            NSString*tid=[t[@"id"] isKindOfClass:[NSString class]]?t[@"id"]:nil; if(!tid.length) continue;
+            long long ms=[t[@"duration_ms"] longLongValue]; [pool addObject:@{@"id":tid,@"dur":@(ms)}]; }
+        if(!pool.count){ [_offSpin stopAnimating]; _offBtn.hidden=NO; [[[UIAlertView alloc] initWithTitle:@"Nenhuma música encontrada" message:@"Não encontrei músicas curtidas para colocar na seleção." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show]; return; }
+        BOOL allow=[[NSUserDefaults standardUserDefaults] boolForKey:@"likedDailyRepeat"];
+        NSMutableArray*history=[NSMutableArray arrayWithArray:[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyHistory"]?:@[]];
+        NSMutableSet*recent=[NSMutableSet set]; if(!allow) for(id a in history) if([a isKindOfClass:[NSArray class]]) [recent addObjectsFromArray:a];
+        for(NSInteger i=(NSInteger)pool.count-1;i>0;i--){ NSInteger j=arc4random_uniform((uint32_t)i+1); [pool exchangeObjectAtIndex:i withObjectAtIndex:j]; }
+        id budgetValue=[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyBudgetMB"];
+        long long budget=budgetValue?(long long)([budgetValue doubleValue]*1024*1024):LLONG_MAX;
+        // Streaming cache is expendable: reclaim it before estimating how far
+        // the unlimited liked-song queue can safely fill the device.
+        [MMSpotify songCacheBytes];
+        long long spaceBudget=MAX(0,[MMSpotify freeDiskBytes]-MM_LIKED_DOWNLOAD_MIN_FREE_BYTES);
+        NSMutableArray*chosen=[NSMutableArray array]; long long bytes=0; NSArray*have=[MMSpotify downloadedTracks]; NSMutableDictionary*downloaded=[NSMutableDictionary dictionary]; for(NSDictionary*d in have) downloaded[d[@"id"]]=d[@"bytes"]?:@0;
+        NSInteger estimateKbps=[MMMediaQuality downloadBitrateForWiFi];
+        long long newBytes=0;
+        // Budget applies only to the newly selected set; existing downloads use their actual file sizes.
+        NSMutableArray*candidates=[NSMutableArray array];
+        for(NSDictionary*t in pool) if(allow || ![recent containsObject:t[@"id"]]) [candidates addObject:t];
+        // Se acabaram as faixas inéditas, libera as mais antigas pela ordem embaralhada para não gerar seleção vazia.
+        if(!allow && candidates.count<pool.count) {
+            NSMutableArray*older=[NSMutableArray array];
+            for(NSDictionary*t in pool) if([recent containsObject:t[@"id"]]) [older addObject:t];
+            for(NSInteger i=(NSInteger)older.count-1;i>0;i--){ NSInteger j=arc4random_uniform((uint32_t)i+1); [older exchangeObjectAtIndex:i withObjectAtIndex:j]; }
+            [candidates addObjectsFromArray:older];
+        }
+        for(NSDictionary*t in candidates){
+            NSString*tid=t[@"id"];
+            long long existingBytes=[downloaded[tid] longLongValue];
+            long long estimate=existingBytes?existingBytes:MAX(1,[t[@"dur"] longLongValue])*estimateKbps/8;
+            long long storageCost=existingBytes?0:estimate;
+            if((budget!=LLONG_MAX && (estimate>budget || bytes>budget-estimate)) || storageCost>spaceBudget || newBytes>spaceBudget-storageCost) continue;
+            [chosen addObject:tid];
+            if(bytes<=LLONG_MAX-estimate) bytes+=estimate; else bytes=LLONG_MAX;
+            if(newBytes<=LLONG_MAX-storageCost) newBytes+=storageCost; else newBytes=LLONG_MAX;
+        }
+        if(!chosen.count){ [_offSpin stopAnimating]; _offBtn.hidden=NO; [[[UIAlertView alloc] initWithTitle:@"Limite diário" message:@"Não há espaço suficiente sem usar a reserva mínima de 256 MB para o sistema, apps e fotos." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show]; return; }
+        NSMutableArray*newHist=[NSMutableArray arrayWithObject:chosen]; [newHist addObjectsFromArray:history]; while(newHist.count>7) [newHist removeLastObject]; [[NSUserDefaults standardUserDefaults] setObject:newHist forKey:@"likedDailyHistory"];
+        [MMSpotify queueLikedDailyTracks:chosen]; [_offSpin stopAnimating]; _offBtn.hidden=NO;
+        NSString*msg=[NSString stringWithFormat:@"%lu músicas · %@ estimados",(unsigned long)chosen.count,[MMTrackListController fmtBytes:bytes]];
+        [[[UIAlertView alloc] initWithTitle:@"Seleção offline" message:msg delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show];
+    }];
 }
 enum { kAlertRemove=1, kAlertSave=2 };
 - (void)toggleDownload {
     if(!_tracks.count) return;
     NSArray*ids=_allIds?:[_tracks valueForKey:@"id"];
-    if(_allIds && [MMSpotify allDownloaded:ids]){
-        UIAlertView*a=[[UIAlertView alloc] initWithTitle:L(@"Remove offline?") message:L(@"Delete the downloaded tracks of this playlist.") delegate:self cancelButtonTitle:L(@"Cancel") otherButtonTitles:L(@"Remove"),nil];
+    NSArray*downloadIDs=ids;
+    if([self isPodcastEpisodes]){ NSMutableArray*q=[NSMutableArray array]; for(NSString*eid in ids) [q addObject:[@"episode:" stringByAppendingString:eid]]; downloadIDs=q; }
+    if(_allIds && [MMSpotify allDownloaded:downloadIDs]){
+        UIAlertView*a=[[UIAlertView alloc] initWithTitle:L(@"Remove offline?") message:[self isPodcastEpisodes]?@"Delete the downloaded podcast episodes.":L(@"Delete the downloaded tracks of this playlist.") delegate:self cancelButtonTitle:L(@"Cancel") otherButtonTitles:L(@"Remove"),nil];
         a.tag=kAlertRemove; [a show];
         return;
     }
@@ -333,7 +526,7 @@ enum { kAlertRemove=1, kAlertSave=2 };
                 if(![it isKindOfClass:[NSDictionary class]])continue;
                 id tw=((NSDictionary*)it)[@"track"]; NSDictionary*t=[tw isKindOfClass:[NSDictionary class]]?tw:(NSDictionary*)it;
                 id tid=t[@"id"]; if([tid isKindOfClass:[NSString class]])[out addObject:tid];
-                id alb=t[@"album"]; if([alb isKindOfClass:[NSDictionary class]]){ NSString*cu=[MMCovers bestURL:alb[@"images"]]; if(cu.length)[covs addObject:cu]; }
+                id alb=t[@"album"]; if([alb isKindOfClass:[NSDictionary class]]){ NSString*cu=[MMCovers smallURL:alb[@"images"]]; if(cu.length)[covs addObject:cu]; }
             }
             [self updateDlState];
             if(!out.count) return;
@@ -344,21 +537,24 @@ enum { kAlertRemove=1, kAlertSave=2 };
     [self askSave];
 }
 - (void)askSave {
-    NSString*msg=LF(@"%lu tracks · %@ free",(unsigned long)_allIds.count,[MMTrackListController fmtBytes:[MMSpotify freeDiskBytes]]);
+    NSString*msg=[NSString stringWithFormat:@"%lu %@ · %@ free",(unsigned long)_allIds.count,[self isPodcastEpisodes]?@"episodes":L(@"tracks"),[MMTrackListController fmtBytes:[MMSpotify freeDiskBytes]]];
     UIAlertView*a=[[UIAlertView alloc] initWithTitle:L(@"Save offline?") message:msg delegate:self cancelButtonTitle:L(@"Cancel") otherButtonTitles:L(@"Save"),nil];
     a.tag=kAlertSave; [a show];
 }
 - (void)startDownload:(NSArray *)ids {
     for(NSDictionary*t in _tracks){ NSString*cu=t[@"cover"]; if([cu isKindOfClass:[NSString class]]&&cu.length)[MMCovers prefetch:cu]; }  // geladene Cover offline sichern
     for(NSString*cu in _allCovers) [MMCovers prefetch:cu];   // und die der noch nicht angezeigten Titel
-    [MMSpotify markOffline:_title trackIds:ids];   // dauerhaft als Offline-Liste merken -> Auto-Resume nach Neustart
-    [MMSpotify queueDownloadTracks:ids];   // globale Warteschlange; Status läuft über die globale Leiste (Notifications)
+    if([self isPodcastEpisodes]) [MMSpotify queueDownloadEpisodes:ids];
+    else { [MMSpotify markOffline:_title trackIds:ids]; [MMSpotify queueDownloadTracks:ids]; }
     _dlRunning=YES; [self updateDlState];
 }
 - (void)alertView:(UIAlertView *)av clickedButtonAtIndex:(NSInteger)idx {
     if(idx!=1) return;
     if(av.tag==kAlertSave){ [self startDownload:_allIds]; return; }
-    NSArray*ids=_allIds?:[_tracks valueForKey:@"id"]; [MMSpotify unmarkOffline:ids]; [MMSpotify removeDownloads:ids]; [self updateDlState]; [_table reloadData];
+    NSArray*ids=_allIds?:[_tracks valueForKey:@"id"];
+    if([self isPodcastEpisodes]){ for(NSString*eid in ids) [MMSpotify deleteDownload:[@"episode:" stringByAppendingString:eid]]; }
+    else { [MMSpotify unmarkOffline:ids]; [MMSpotify removeDownloads:ids]; }
+    [self updateDlState]; [_table reloadData];
 }
 
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { return _tracks.count; }
@@ -402,11 +598,11 @@ enum { kAlertRemove=1, kAlertSave=2 };
     if(albumPage){ CGRect f=ar.frame; f.size.width=MIN([t[@"artist"] sizeWithFont:ar.font].width+8,textR-f.origin.x); ar.frame=f; }   // nur der Name ist antippbar, der Rest der Zeile spielt
     ((UILabel*)[c.contentView viewWithTag:6]).text=t[@"album"];
     long long ms=[t[@"dur"] longLongValue]; ((UILabel*)[c.contentView viewWithTag:7]).text=ms>0?[NSString stringWithFormat:@"%lld:%02lld",ms/60000,(ms/1000)%60]:@"";
-    ((UIImageView*)[c.contentView viewWithTag:4]).image=[MMSpotify isDownloaded:t[@"id"]]?[SpotTheme downloadedIcon:18]:nil;
+    ((UIImageView*)[c.contentView viewWithTag:4]).image=[MMSpotify isDownloaded:t[@"id"] mediaType:t[@"mediaType"]]?[SpotTheme downloadedIcon:18]:nil;
     if(_coverStyle) ((UILabel*)[c.contentView viewWithTag:5]).text=[NSString stringWithFormat:@"%ld",(long)ip.row+1];
     UIImageView*cov=(UIImageView*)[c.contentView viewWithTag:1];
     if(cov){ cov.image=nil; [MMCovers load:t[@"cover"] into:cov]; }   // gemeinsamer RAM+Platte-Cache (reuse-sicher)
-    c.contentView.alpha=(_offline && ![MMSpotify playableOffline:t[@"id"]])?0.35:1;   // offline nicht spielbar -> grau
+    c.contentView.alpha=(_offline && ![MMSpotify playableOffline:t[@"id"] mediaType:t[@"mediaType"]])?0.35:1;
     return c;
 }
 // Album-Seite: Artist-Name in einer Zeile oder im Kopf -> Artist-Seite
@@ -426,13 +622,14 @@ enum { kAlertRemove=1, kAlertSave=2 };
 // was ohne Netz spielt (heruntergeladen / im Song-Cache); online alles
 - (NSArray *)playableTracks {
     if(!_offline) return _tracks;
-    NSMutableArray*p=[NSMutableArray array]; for(NSDictionary*t in _tracks) if([MMSpotify playableOffline:t[@"id"]]) [p addObject:t];
+    NSMutableArray*p=[NSMutableArray array]; for(NSDictionary*t in _tracks) if([MMSpotify playableOffline:t[@"id"] mediaType:t[@"mediaType"]]) [p addObject:t];
     return p;
 }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];   // Auswahl nicht stehen lassen (sonst bleibt die Schrift weiß)
     NSDictionary*t=_tracks[ip.row]; NSArray*list=[self playableTracks]; NSUInteger i=[list indexOfObject:t];
     if(i==NSNotFound) return;   // offline und nicht gespeichert: grau, spielt nicht
+    if([self playlistId]){ [self playPlaylistShuffled:[[MMRootController shared] shuffle] startIndex:(NSInteger)i]; return; }
     [[MMRootController shared] playList:list index:(NSInteger)i context:[self context]];
 }
 // Herkunft für den Verlauf: Lieblingssongs, Playlist oder Album (Cover = Albumcover des ersten Titels)
@@ -450,5 +647,10 @@ enum { kAlertRemove=1, kAlertSave=2 };
 - (void)dlRefresh { if(![MMSpotify isDownloading]) _dlRunning=NO; [self updateDlState]; [_table reloadData]; }
 - (void)dlStopped { _dlRunning=NO; [self updateDlState]; [_table reloadData]; }   // nach Download-Ende ✓-Marken aktualisieren
 - (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
-- (void)relayoutForSize:(CGSize)size { [_table reloadData]; }   // iPad gedreht: Zellen in neuer Breite
+- (void)relayoutForSize:(CGSize)size {
+    CGFloat W=_table.bounds.size.width;
+    NSArray*buttons=_playButton?@[_playButton,_shuffleButton,_actionsButton]:@[];
+    for(NSUInteger i=0;i<buttons.count;i++){ UIButton*b=buttons[i]; CGRect f=b.frame; CGFloat width=[SpotTheme ios6]?MIN(86,(W-48)/3):(W-24)/3-6; f.origin.x=([SpotTheme ios6]?(W-(width*3+16))/2:12)+i*(width+([SpotTheme ios6]?8:6)); f.size.width=width; b.frame=f; }
+    [_table reloadData];
+}   // iPad gedreht: Zellen in neuer Breite
 @end

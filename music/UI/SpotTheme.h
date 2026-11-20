@@ -43,6 +43,9 @@
 + (UIImage *)tabSelectionImage:(CGSize)size;     // iOS 6: eingedrückte Fläche hinter dem gewählten Tab          // iOS 6: gefülltes 30er-Symbol für die echte Tab-Leiste (das System färbt es)
 + (void)engrave:(UILabel *)l;                   // iOS 6: weißer Schatten unter dunkler Schrift auf Nadelstreifen
 + (void)skinPage:(UIView *)page;                // iOS 6: echte Navigationsleiste über dem Seitenkopf (Titel, Zurück, Knöpfe)
+// Shared filled action buttons: native gloss for Classic iOS, rounded Spotify controls otherwise.
++ (void)styleActionButton:(UIButton *)button primary:(BOOL)primary;
++ (UIImage *)playlistPlaceholder:(CGFloat)size;
 + (UIColor *)bg;        // 121212
 + (UIColor *)bar;       // 181818 (Leisten)
 + (UIColor *)card;      // 282828

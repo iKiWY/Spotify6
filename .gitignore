@@ -10,3 +10,4 @@ obj/
 backup*/
 .spotify-*
 *.log
+music/Spot/MMLastFMAppConfig.local.h

@@ -84,7 +84,7 @@
         NSMutableArray*q=[NSMutableArray arrayWithObject:[self likedTile]];
         for(NSDictionary*p in ([j[@"items"] isKindOfClass:[NSArray class]]?j[@"items"]:@[])){
             if(![p isKindOfClass:[NSDictionary class]]||![p[@"id"] isKindOfClass:[NSString class]]) continue;
-            [q addObject:[self playlistTile:p[@"id"] name:p[@"name"]?:L(@"Playlist") cover:[MMCovers bestURL:p[@"images"]]?:@""]];
+            [q addObject:[self playlistTile:p[@"id"] name:p[@"name"]?:L(@"Playlist") cover:[MMCovers smallURL:p[@"images"]]?:@""]];
         }
         _libTiles=q; [self mergeTiles];
     }];
@@ -126,15 +126,15 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
     NSMutableDictionary*img=[NSMutableDictionary dictionary];
     for(NSDictionary*x in [(_serverCtx?:@[]) arrayByAddingObjectsFromArray:[MMHistory contexts]]){
         if(![x isKindOfClass:[NSDictionary class]]) continue; NSString*k=keyOf(x);
-        if(!img[k] && [MMCovers bestURL:x[@"images"]].length) img[k]=x[@"images"]; }
+        if(!img[k] && [MMCovers smallURL:x[@"images"]].length) img[k]=x[@"images"]; }
     NSMutableArray*ctx=[NSMutableArray array];
     for(NSDictionary*x in byTime([MMHistory contexts],_serverCtx?:@[],keyOf,8)){
         NSDictionary*im=img[keyOf(x)];
-        if(im && ![MMCovers bestURL:x[@"images"]].length){ NSMutableDictionary*m=[x mutableCopy]; m[@"images"]=im; [ctx addObject:m]; } else [ctx addObject:x]; }
+        if(im && ![MMCovers smallURL:x[@"images"]].length){ NSMutableDictionary*m=[x mutableCopy]; m[@"images"]=im; [ctx addObject:m]; } else [ctx addObject:x]; }
     NSMutableArray*q=[NSMutableArray array];
     for(NSDictionary*c in ctx){
         NSString*type=c[@"type"], *cid=[c[@"id"] isKindOfClass:[NSString class]]?c[@"id"]:@"", *nm=[c[@"name"] isKindOfClass:[NSString class]]?c[@"name"]:@"";
-        NSString*cov=[MMCovers bestURL:c[@"images"]]?:@"";
+        NSString*cov=[MMCovers smallURL:c[@"images"]]?:@"";
         if([type isEqual:@"liked"]) [q addObject:[self likedTile]];
         else if(!cid.length) continue;
         else if([type isEqual:@"artist"]) [q addObject:@{@"name":nm,@"artistId":cid,@"cover":cov}];
@@ -300,7 +300,7 @@ static void coverInto(NSString *url, UIImageView *iv, CGFloat radius) {
         NSString*nm=[t[@"name"] isKindOfClass:[NSString class]]?t[@"name"]:@"";
         id arts=t[@"artists"]; NSString*an=@"", *aid=@""; if([arts isKindOfClass:[NSArray class]]&&[arts count]){ id a0=arts[0]; if([a0 isKindOfClass:[NSDictionary class]]&&[a0[@"name"] isKindOfClass:[NSString class]]) an=a0[@"name"];
             if([a0 isKindOfClass:[NSDictionary class]]&&[a0[@"id"] isKindOfClass:[NSString class]]) aid=a0[@"id"]; }   // für "Zuletzt gehörte Artists" (iPad)
-        id alb=t[@"album"]; NSString*cov=[alb isKindOfClass:[NSDictionary class]]?[MMCovers bestURL:alb[@"images"]]:@"";
+        id alb=t[@"album"]; NSString*cov=[alb isKindOfClass:[NSDictionary class]]?[MMCovers smallURL:alb[@"images"]]:@"";
         NSMutableDictionary*e=[@{@"id":tid,@"title":nm,@"artist":an,@"artistId":aid,@"cover":cov?:@""} mutableCopy];
         if(((NSDictionary*)it)[@"at"]) e[@"at"]=((NSDictionary*)it)[@"at"];
         if([alb isKindOfClass:[NSDictionary class]] && [alb[@"id"] isKindOfClass:[NSString class]]){ e[@"albumId"]=alb[@"id"]; e[@"album"]=[alb[@"name"] isKindOfClass:[NSString class]]?alb[@"name"]:@""; }

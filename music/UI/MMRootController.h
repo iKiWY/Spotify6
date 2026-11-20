@@ -8,6 +8,7 @@
 - (void)showNowPlayingTitle:(NSString *)title artist:(NSString *)artist;  // Now-Playing-Leiste füllen
 // Spielt einen echten Track ab (Titel/Artist provisorisch; echte Metadaten + Cover werden nachgeladen).
 - (void)playTrackId:(NSString *)trackId title:(NSString *)title artist:(NSString *)artist cover:(NSString *)cover;
+- (void)playTrackId:(NSString *)trackId title:(NSString *)title artist:(NSString *)artist cover:(NSString *)cover mediaType:(NSString *)mediaType;
 // Spielt eine Liste (Dicts mit id/title/artist) ab Index idx -> Weiter/Zurück innerhalb der Liste.
 - (void)playList:(NSArray *)list index:(NSInteger)idx;
 // dasselbe mit Herkunft {type: playlist|album|artist|liked, id, name, images} für den Verlauf auf der Startseite

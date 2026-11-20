@@ -79,6 +79,82 @@ static void drawGradient(CGRect r, const CGFloat *comps, const CGFloat *locs, si
     m=[UIGraphicsGetImageFromCurrentImageContext() stretchableImageWithLeftCapWidth:0 topCapHeight:0]; UIGraphicsEndImageContext();
     memo[@(h)]=m; return m;
 }
+// Obtain the rectangular counterpart of UIKit's tinted Back button from UIKit
+// itself. This preserves the system gradient, border and tint calculation.
++ (UIImage *)classicActionButtonImage {
+    static UIImage*image; if(image)return image;
+    UINavigationBar*bar=[[UINavigationBar alloc] initWithFrame:CGRectMake(0,0,200,44)];
+    bar.tintColor=[self barTint];
+    UINavigationItem*item=[[UINavigationItem alloc] initWithTitle:@""];
+    UIBarButtonItem*action=[[UIBarButtonItem alloc] initWithTitle:@" " style:UIBarButtonItemStyleBordered target:nil action:NULL];
+    action.width=50; item.rightBarButtonItem=action; [bar setItems:@[item] animated:NO]; [bar layoutIfNeeded];
+    NSMutableArray*pending=[NSMutableArray arrayWithArray:bar.subviews]; UIControl*control=nil;
+    while(pending.count){ UIView*v=pending.lastObject; [pending removeLastObject];
+        if([v isKindOfClass:[UIControl class]] && v.bounds.size.width>=30 && v.bounds.size.height>=20){ control=(UIControl*)v; break; }
+        [pending addObjectsFromArray:v.subviews];
+    }
+    if(!control)return [self barButtonImage];
+    UIGraphicsBeginImageContextWithOptions(control.bounds.size,NO,0);
+    [control.layer renderInContext:UIGraphicsGetCurrentContext()];
+    image=[UIGraphicsGetImageFromCurrentImageContext() resizableImageWithCapInsets:UIEdgeInsetsMake(0,8,0,8)]; UIGraphicsEndImageContext();
+    return image;
+}
++ (void)styleActionButton:(UIButton *)button primary:(BOOL)primary {
+    button.backgroundColor=[UIColor clearColor]; button.layer.cornerRadius=0;
+    button.titleLabel.adjustsFontSizeToFitWidth=YES;
+    if([self ios6]){
+        // Use the actual navigation-control artwork and forest tint, not Spotify green.
+        CGFloat height=button.bounds.size.height, inset=MAX(0,(height-30)/2);
+        UIGraphicsBeginImageContextWithOptions(CGSizeMake(16,height),NO,0);
+        [[self classicActionButtonImage] drawInRect:CGRectMake(0,inset,16,30)];
+        UIImage*normal=[UIGraphicsGetImageFromCurrentImageContext() resizableImageWithCapInsets:UIEdgeInsetsMake(0,7,0,7)]; UIGraphicsEndImageContext();
+        [button setBackgroundImage:normal forState:UIControlStateNormal];
+        UIGraphicsBeginImageContextWithOptions(normal.size,NO,0);
+        [normal drawAtPoint:CGPointZero]; [[UIColor colorWithWhite:0 alpha:0.22] setFill];
+        UIRectFillUsingBlendMode(CGRectMake(0,0,normal.size.width,normal.size.height),kCGBlendModeSourceAtop);
+        UIImage*pressed=[UIGraphicsGetImageFromCurrentImageContext() resizableImageWithCapInsets:UIEdgeInsetsMake(0,7,0,7)]; UIGraphicsEndImageContext();
+        [button setBackgroundImage:pressed forState:UIControlStateHighlighted];
+        [button setBackgroundImage:normal forState:UIControlStateDisabled];
+        // Keep a 44-point touch target around the same 30-point face as the toolbar buttons.
+
+        button.titleLabel.font=[UIFont boldSystemFontOfSize:13];
+        [button setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        [button setTitleColor:[UIColor colorWithWhite:1 alpha:0.45] forState:UIControlStateDisabled];
+        [button setTitleShadowColor:[UIColor colorWithWhite:0 alpha:0.5] forState:UIControlStateNormal];
+        button.titleLabel.shadowOffset=CGSizeMake(0,-1);
+        return;
+    }
+    button.titleLabel.font=[UIFont boldSystemFontOfSize:14];
+    [button setTitleColor:primary?[UIColor blackColor]:[self ink] forState:UIControlStateNormal];
+    [button setTitleColor:[self faint] forState:UIControlStateDisabled];
+    [button setTitleShadowColor:[UIColor clearColor] forState:UIControlStateNormal];
+    button.titleLabel.shadowOffset=CGSizeZero;
+    for(NSNumber*state in @[@(UIControlStateNormal),@(UIControlStateHighlighted),@(UIControlStateDisabled)]){
+        UIColor*fill=primary?[self green]:[self card];
+        if(state.unsignedIntegerValue==UIControlStateHighlighted)fill=primary?[UIColor colorWithRed:0.1 green:0.55 blue:0.26 alpha:1]:[self muted];
+        if(state.unsignedIntegerValue==UIControlStateDisabled)fill=[self card];
+        UIGraphicsBeginImageContextWithOptions(CGSizeMake(43,43),NO,0);
+        [fill setFill]; [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(0,0,43,43) cornerRadius:20] fill];
+        UIImage*image=[UIGraphicsGetImageFromCurrentImageContext() resizableImageWithCapInsets:UIEdgeInsetsMake(21,21,21,21)]; UIGraphicsEndImageContext();
+        [button setBackgroundImage:image forState:state.unsignedIntegerValue];
+    }
+}
++ (UIImage *)playlistPlaceholder:(CGFloat)size {
+    static NSMutableDictionary*memo; if(!memo)memo=[NSMutableDictionary dictionary];
+    NSString*key=[NSString stringWithFormat:@"%@-%g",[self skin],size];
+    UIImage*cached=memo[key]; if(cached)return cached;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(size,size),YES,0);
+    CGFloat light=[self ios6]?0.70:0.24, dark=[self ios6]?0.46:0.12;
+    CGFloat colors[]={light,light,light,1,dark,dark,dark,1}, locations[]={0,1};
+    drawGradient(CGRectMake(0,0,size,size),colors,locations,2);
+    [[UIColor colorWithWhite:0.92 alpha:1] setFill]; [[UIColor colorWithWhite:0.92 alpha:1] setStroke];
+    UIBezierPath*note=[UIBezierPath bezierPath]; note.lineWidth=MAX(2,size*0.045); note.lineJoinStyle=kCGLineJoinRound;
+    [note moveToPoint:CGPointMake(size*.43,size*.65)]; [note addLineToPoint:CGPointMake(size*.43,size*.34)];
+    [note addLineToPoint:CGPointMake(size*.69,size*.27)]; [note addLineToPoint:CGPointMake(size*.69,size*.58)]; [note stroke];
+    [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(size*.27,size*.59,size*.18,size*.12)] fill];
+    [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(size*.53,size*.52,size*.18,size*.12)] fill];
+    UIImage*image=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext(); if(image)memo[key]=image; return image;
+}
 + (UIImage *)tabHighlightImage {
     static UIImage*m; if(m) return m;
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(13,13),NO,0);

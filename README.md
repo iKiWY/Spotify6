@@ -75,7 +75,8 @@ Spotify6 is a universal app. On the iPad it has its own layout with a sidebar, a
 - **Queue** with *Next in queue* and *Next up*: drag to reorder, swipe to add or remove, repeat the queue, or stop when it runs out
 - **Song menu**: long-press any song to view the artist or album, queue it, like it, add it to a playlist or download it
 - **Home** with the playlists, albums and artists you played recently, plus recently played songs, including plays from the phone
-- **Search** for artists, songs and albums, with your recent searches
+- **Search** for artists, songs, albums and playlists, with your recent searches
+- **Playlist controls**: play the full list in order or shuffled, save/remove it from your library, create playlists from Library or the song picker, and rename your own playlists
 - **Artist and album pages**, with an optional big-cover look for albums and playlists
 - **Offline** playlists, albums and single songs, with resumable and background downloads
 - **Song cache**: recently played songs are kept on the phone (up to 500 MB), so they play again without downloading
@@ -115,6 +116,11 @@ scripts/install.sh
 A plain `gmake package` builds a debug version with an extra test hook (`music/App/MMDebug.m`) for driving the app over SSH; release builds leave it out.
 
 **Notification Center widget** (optional, `widget/`): build it with `gmake package FINALPACKAGE=1` inside `widget/`, install the `.deb` on the device with `dpkg -i`, respring, and turn it on in iOS Settings → Notifications. It can be switched off any time in Spotify6's settings. iPads on iOS 5 can't show Notification Center widgets.
+
+### Checking playlist features
+
+See [the playlist verification checklist](docs/playlist-verification.md) for device checks,
+including multi-page queues, library membership, account write failures and offline behavior.
 
 ## How it works
 

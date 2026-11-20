@@ -1,12 +1,23 @@
-// MMAudio.h - spielt ein (bereits entschlüsseltes) Spotify-Ogg per AudioQueue ab.
+// MMAudio.h - spielt ein (bereits entschlüsseltes) Spotify-Ogg über AUGraph ab.
 // Dekodiert Ogg/Vorbis streamend mit stb_vorbis; iOS 6 kann Vorbis nicht nativ.
 #import <Foundation/Foundation.h>
 
-// Titel, der noch lädt: Puffer in voller Dateigröße, wird vorne nach und nach (entschlüsselt) gefüllt.
-// Der Lade-Thread schreibt Bytes und erhöht danach avail; die Wiedergabe liest nie hinter avail.
-@interface MMAudioStream : NSObject
+// Puffer für einen gerade ladenden Stream. Podcasts nutzen dateigestützte mmap-Speicher,
+// damit lange Folgen nicht vollständig den physischen RAM belegen.
+@interface MMAudioStream : NSObject {
+@private
+    NSMutableData *_memoryData;
+    void *_mapping;
+    NSUInteger _length;
+    int _fileDescriptor;
+    NSUInteger _avail;
+    BOOL _complete, _failed;
+}
 - (id)initWithLength:(NSUInteger)length;
-@property (nonatomic, readonly) NSMutableData *data;   // feste Größe (wird nie umgelegt)
+- (id)initWithLength:(NSUInteger)length diskBacked:(BOOL)diskBacked;
+- (NSData *)completedData;    // nil for mapped podcast streams; normal music keeps its existing NSData cache path
+@property (nonatomic, readonly) void *bytes;
+@property (nonatomic, readonly) NSUInteger length;
 @property (atomic) NSUInteger avail;                   // so viele Bytes sind schon da
 @property (atomic) BOOL complete, failed;
 @end
@@ -27,4 +38,7 @@
 + (double)duration;      // Sekunden
 + (double)currentTime;   // Sekunden (echte Abspielposition)
 + (void)seekTo:(double)seconds;   // an Position springen
++ (void)setEqualizerEnabled:(BOOL)enabled;
++ (BOOL)isEqualizerEnabled;
++ (void)setEqualizerGain:(double)gain forBand:(NSUInteger)band;
 @end

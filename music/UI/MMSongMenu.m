@@ -9,6 +9,7 @@
 #import "MeshL10n.h"
 #import "MMTrackListController.h"
 #import "MMArtistController.h"
+#import "MMPlaylistEditor.h"
 
 // ---- Playlist-Auswahl (nur eigene oder gemeinsame Playlists), im Inhaltsbereich ----
 @interface MMPlaylistPicker : UIViewController <UITableViewDataSource, UITableViewDelegate>
@@ -34,20 +35,25 @@
     _hint=[[UILabel alloc] initWithFrame:CGRectMake(20,110,W-40,40)]; _hint.textColor=[SpotTheme faint]; _hint.font=[SpotTheme sub]; _hint.textAlignment=NSTextAlignmentCenter; _hint.numberOfLines=2; _hint.hidden=YES; [self.view addSubview:_hint];
     _spin=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite]; _spin.center=CGPointMake(W/2,90); _spin.hidesWhenStopped=YES; [_spin startAnimating]; [self.view addSubview:_spin];
     [SpotTheme skinPage:self.view];
+    UIButton*create=[UIButton buttonWithType:UIButtonTypeCustom]; create.frame=[SpotTheme ios6]?CGRectMake((W-176)/2,4,176,44):CGRectMake(12,8,W-24,40);
+    [create setTitle:L(@"+ Create playlist") forState:UIControlStateNormal]; [SpotTheme styleActionButton:create primary:YES];
+    [create addTarget:self action:@selector(createPlaylist) forControlEvents:UIControlEventTouchUpInside]; UIView*header=[[UIView alloc] initWithFrame:CGRectMake(0,0,W,56)]; [header addSubview:create]; create.autoresizingMask=[SpotTheme ios6]?(UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleRightMargin):UIViewAutoresizingFlexibleWidth; _table.tableHeaderView=header;
     NSString*me=[MMSpotify username];
-    [MMSpotify apiUserCached:@"me/playlists?limit=50" completion:^(NSDictionary*j,NSInteger st,BOOL fresh){
+    [MMSpotify apiUserAllItems:@"me/playlists?limit=100" completion:^(NSArray*items,NSInteger st){
         [_spin stopAnimating];
-        NSArray*items=[j[@"items"] isKindOfClass:[NSArray class]]?j[@"items"]:nil;
         if(!items){ _hint.text=L(@"Couldn't load (offline?)."); _hint.hidden=NO; return; }
         NSMutableArray*out=[NSMutableArray array];
         for(NSDictionary*p in items){ if(![p isKindOfClass:[NSDictionary class]]||![p[@"id"] isKindOfClass:[NSString class]]) continue;
             BOOL mine=[p[@"owner"] isKindOfClass:[NSDictionary class]] && [p[@"owner"][@"id"] isEqual:me];
             if(!mine && ![p[@"collaborative"] boolValue]) continue;   // fremde Playlists lassen sich nicht ändern
-            [out addObject:@{@"id":p[@"id"],@"name":[p[@"name"] isKindOfClass:[NSString class]]?p[@"name"]:L(@"Playlist"),@"cover":[MMCovers bestURL:p[@"images"]]?:@""}]; }
+            [out addObject:@{@"id":p[@"id"],@"name":[p[@"name"] isKindOfClass:[NSString class]]?p[@"name"]:L(@"Playlist"),@"cover":[MMCovers smallURL:p[@"images"]]?:@""}]; }
         _lists=out; _hint.hidden=(out.count>0); if(!out.count) _hint.text=L(@"You have no playlists of your own yet.");
         [_table reloadData];
     }];
     MMAutoMask(self.view);
+}
+- (void)createPlaylist {
+    [MMPlaylistEditor createWithTrack:self.track completion:^(NSDictionary*p){ [[MMRootController shared] popContent]; }];
 }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return _lists.count; }
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
@@ -57,7 +63,10 @@
         UILabel*nm=[[UILabel alloc] initWithFrame:CGRectMake(72,0,tv.bounds.size.width-88,60)]; nm.tag=11; nm.font=[UIFont systemFontOfSize:16]; nm.textColor=[SpotTheme ink]; [c.contentView addSubview:nm]; }
     NSDictionary*p=_lists[ip.row];
     ((UILabel*)[c.contentView viewWithTag:11]).text=p[@"name"];
-    UIImageView*th=(UIImageView*)[c.contentView viewWithTag:10]; th.image=nil; [MMCovers load:p[@"cover"] into:th];
+    UIImageView*th=(UIImageView*)[c.contentView viewWithTag:10]; [MMCovers playlistPlaceholderInto:th];
+    NSString*pid=p[@"id"]; th.accessibilityIdentifier=pid;
+    if([p[@"cover"] length]) [MMCovers load:p[@"cover"] into:th];
+    else [MMCovers playlistCover:pid completion:^(NSString*url){ if(url.length && [th.accessibilityIdentifier isEqual:pid]) [MMCovers load:url into:th]; }];
     return c;
 }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
@@ -80,18 +89,34 @@
 @end
 
 // ---- Menü ----
+@interface MMSongMenu ()
++ (void)showForEpisode:(NSDictionary *)episode;
+@end
 @implementation MMSongMenu
 // Das Menü kommt über die oberste sichtbare Ansicht (auch über Player/Warteschlange)
 static UIView* topHost(void){ UIViewController*vc=[MMRootController shared]; while(vc.presentedViewController) vc=vc.presentedViewController; return vc.view; }
 
 + (void)showForTrack:(NSDictionary *)t {
     if(![t[@"id"] length]) return;
+    if([t[@"mediaType"] isEqual:@"episode"]){ [self showForEpisode:t]; return; }
     NSNumber*liked=[MMSpotify likedCached:t[@"id"]];
     if(!liked){   // Lieblingssongs noch nicht im Speicher -> einmal laden, dann Menü
         [MMSpotify isLiked:t[@"id"] completion:^(BOOL l, BOOL known){ [self show:t liked:known?@(l):nil]; }];
         return;
     }
     [self show:t liked:liked];
+}
++ (void)showForEpisode:(NSDictionary *)episode {
+    NSString*eid=episode[@"id"]; if(!eid.length) return;
+    MMRootController*root=[MMRootController shared];
+    BOOL downloaded=[MMSpotify isDownloaded:eid mediaType:@"episode"];
+    NSArray*opts=@[L(@"Play next"),L(@"Add to queue"),downloaded?L(@"Remove download"):L(@"Download")];
+    [MMSheet showIn:topHost() title:episode[@"title"]?:episode[@"name"] subtitle:episode[@"artist"] imageURL:episode[@"cover"] options:opts done:^(NSInteger i){
+        if(i==0){ [root queueTrack:episode next:YES]; [root showDownloadMessage:L(@"Plays next")]; }
+        else if(i==1){ [root queueTrack:episode next:NO]; [root showDownloadMessage:L(@"Added to queue")]; }
+        else if(i==2 && downloaded){ [MMSpotify deleteDownload:[@"episode:" stringByAppendingString:eid]]; [root showDownloadMessage:L(@"Download removed")]; }
+        else if(i==2){ if([episode[@"cover"] length]) [MMCovers prefetch:episode[@"cover"]]; [MMSpotify queueDownloadEpisodes:@[eid]]; }
+    }];
 }
 // Album/Artist des Titels öffnen; IDs aus dem Titel (Player) oder aus den Metadaten
 + (void)openPage:(BOOL)album forTrack:(NSDictionary *)t {

@@ -1,0 +1,5 @@
+// Copy to MMLastFMAppConfig.local.h and fill these with the Last.fm API
+// application credentials. The local file is ignored by git and must never
+// be committed or included in a public pull request.
+#define MMLASTFM_API_KEY @""
+#define MMLASTFM_API_SECRET @""

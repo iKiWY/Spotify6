@@ -3,6 +3,7 @@
 // Verhindert, dass dasselbe Cover auf jedem Screen neu aus dem Netz geladen wird.
 @interface MMCovers : NSObject
 + (NSString *)bestURL:(id)images;                                // wählt ein scharfes (mittleres) Cover statt des kleinsten
++ (NSString *)smallURL:(id)images;                               // kleinste verfügbare Spotify-Variante für Navigationslisten
 + (UIImage *)cached:(NSString *)url;                              // sofort aus RAM, sonst nil
 + (void)load:(NSString *)url into:(UIImageView *)iv;             // RAM->Platte->Netz, setzt Bild auf Main
 + (void)load:(NSString *)url completion:(void(^)(UIImage *img))done;
@@ -15,5 +16,8 @@
 + (void)precacheLibrary;
 // Playlist ohne eigenes Bild: 2x2-Mosaik aus den ersten Album-Covern (wie die Spotify-App), gemerkt auf der Platte.
 // done(url) mit einer Bild-URL für load:, oder nil wenn keine Titel/Cover da sind.
++ (void)playlistPlaceholderInto:(UIImageView *)imageView;
++ (void)invalidateEmptyPlaylistCover:(NSString *)playlistId;
++ (void)invalidatePlaylistCover:(NSString *)playlistId;
 + (void)playlistCover:(NSString *)playlistId completion:(void(^)(NSString *url))done;                                // Cover schonend (seriell) auf die Platte holen (Offline)
 @end

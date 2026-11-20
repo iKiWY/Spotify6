@@ -1,0 +1,19 @@
+Playlist regression tests — 2026-11-03
+Host: macOS, Python 3, clang + Foundation
+
+$ python3 tests/test-pagination.py
+PASS rootlist spans pages
+PASS playlist nested pages
+PASS later page 401 never returns partial success
+PASS later page 429 never returns partial success
+PASS later page 503 never returns partial success
+PASS missing items is not an empty library
+PASS empty playlist is valid
+
+$ python3 tests/test-playlist-management.py
+PASS create and save preserves Unicode name
+PASS creation failure does not attempt rootlist write
+PASS missing URI does not invent a playlist
+PASS library failure retains created ID without retrying creation
+PASS rename refuses foreign owner
+PASS owned rename uses fetched revision

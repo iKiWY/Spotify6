@@ -13,6 +13,7 @@
 #import "MMCovers.h"
 #import "MeshL10n.h"
 #import "MMHistory.h"
+#import "MMLastFM.h"
 #import "MMQueueController.h"
 #import "MMLayout.h"
 #import "MMPadSidebar.h"
@@ -34,7 +35,7 @@ static MMRootController *gRoot;
     UIActivityIndicatorView *_npSpinner;
     NSArray *_tabs; NSMutableArray *_tabBtns, *_vcs;
     NSInteger _sel;
-    NSString *_curId, *_curTitle, *_curArtist, *_curCover;
+    NSString *_curId, *_curTitle, *_curArtist, *_curCover, *_curMediaType;
     __weak MMPlayerController *_player;
     NSArray *_queue; NSInteger _queueIdx;
     NSArray *_origQueue;   // Reihenfolge vor dem Mischen
@@ -46,6 +47,7 @@ static MMRootController *gRoot;
     MMCoverFlowView *_cflow; BOOL _cflowManual;   // Cover Flow (quer); manual = über Menü geöffnet   // iPod-Modus (liegt über allem, Wiedergabe läuft hier weiter)
     double _resumePos, _pendingSeek; BOOL _needsResume;
     NSTimeInterval _playStartTS;   // wann die aktuelle Wiedergabe tatsächlich startete (gegen Finish-Kaskade)
+    NSTimer *_lastFmTimer; double _lastFmLastPosition, _lastFmListened; long long _lastFmStartedAt; BOOL _lastFmScrobbled;
     UIView *_dlBar, *_dlProg; UILabel *_dlLbl;   // globale Offline-Download-Leiste
     NSTimeInterval _dlSince; BOOL _dlCompact;      // nach ein paar Sekunden nur noch dünne Linie
     NSMutableArray *_pushedStack;                 // im Inhaltsbereich geöffnete Ansichten (Titelliste, Artist, Album …), oberste zuletzt
@@ -180,6 +182,7 @@ MM_IOS6_END
     });
 }
 - (void)retire {
+    [_lastFmTimer invalidate]; _lastFmTimer=nil;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     MM_IOS6_BEGIN if([AVAudioSession sharedInstance].delegate==(id)self) [AVAudioSession sharedInstance].delegate=nil; MM_IOS6_END   // iOS 5: Unterbrechungen gehen an die neue Oberfläche
 }
@@ -219,11 +222,15 @@ MM_IOS6_END
 
 - (void)loadView {
     gRoot = self;
+    _lastFmTimer=[NSTimer timerWithTimeInterval:1.0 target:self selector:@selector(lastFmTick) userInfo:nil repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:_lastFmTimer forMode:NSRunLoopCommonModes];
+    [MMLastFM flushQueuedScrobbles];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(trackFinished) name:@"MMAudioDidFinish" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(saveState) name:UIApplicationDidEnterBackgroundNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(saveState) name:UIApplicationWillTerminateNotification object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlProgress:) name:@"MMDownloadProgress" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlDone:) name:@"MMDownloadDone" object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlWifiPaused:) name:@"MMDownloadWifiPaused" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlFull:) name:@"MMDownloadFull" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlError:) name:@"MMDownloadError" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(trackLoadProgress:) name:MMTrackLoadProgress object:nil];
@@ -337,16 +344,16 @@ MM_IOS6_END
     NSUserDefaults*u=[NSUserDefaults standardUserDefaults];
     if(_queue.count){
         NSMutableArray*q=[NSMutableArray array];
-        for(NSDictionary*t in _queue) [q addObject:@{@"id":t[@"id"]?:@"",@"title":t[@"title"]?:@"",@"artist":t[@"artist"]?:@"",@"cover":t[@"cover"]?:@""}];   // Cover mitspeichern
+        for(NSDictionary*t in _queue) [q addObject:@{@"id":t[@"id"]?:@"",@"title":t[@"title"]?:@"",@"artist":t[@"artist"]?:@"",@"cover":t[@"cover"]?:@"",@"mediaType":t[@"mediaType"]?:@"track"}];   // Cover und Medienart mitspeichern
         [u setObject:q forKey:@"spQueue"]; [u setInteger:_queueIdx forKey:@"spIdx"];
     } else [u removeObjectForKey:@"spQueue"];
     if(_shuffle && _origQueue.count){
         NSMutableArray*o=[NSMutableArray array];
-        for(NSDictionary*t in _origQueue) [o addObject:@{@"id":t[@"id"]?:@"",@"title":t[@"title"]?:@"",@"artist":t[@"artist"]?:@"",@"cover":t[@"cover"]?:@""}];
+        for(NSDictionary*t in _origQueue) [o addObject:@{@"id":t[@"id"]?:@"",@"title":t[@"title"]?:@"",@"artist":t[@"artist"]?:@"",@"cover":t[@"cover"]?:@"",@"mediaType":t[@"mediaType"]?:@"track"}];
         [u setObject:o forKey:@"spOrigQueue"];
     } else [u removeObjectForKey:@"spOrigQueue"];
     NSMutableArray*uq=[NSMutableArray array];
-    for(NSDictionary*t in _userQueue) [uq addObject:@{@"id":t[@"id"]?:@"",@"title":t[@"title"]?:@"",@"artist":t[@"artist"]?:@"",@"cover":t[@"cover"]?:@""}];
+    for(NSDictionary*t in _userQueue) [uq addObject:@{@"id":t[@"id"]?:@"",@"title":t[@"title"]?:@"",@"artist":t[@"artist"]?:@"",@"cover":t[@"cover"]?:@"",@"mediaType":t[@"mediaType"]?:@"track"}];
     [u setObject:uq forKey:@"spUserQueue"]; [u setBool:_fromUser forKey:@"spFromUser"];
     [u setBool:_shuffle forKey:@"spShuffle"]; [u setInteger:_repeatMode forKey:@"spRepeat"];
     // für das Mitteilungszentrum-Widget ("Playing from …"): SpringBoard reicht eigene Felder der Now-Playing-Infos nicht weiter
@@ -354,7 +361,7 @@ MM_IOS6_END
     if(ctx.length) [u setObject:ctx forKey:@"spContext"]; else [u removeObjectForKey:@"spContext"];
     NSString*cov=_curCover;
     if(!cov.length && _queue.count && _queueIdx>=0 && _queueIdx<(NSInteger)_queue.count) cov=_queue[_queueIdx][@"cover"];   // Fallback: aus Queue-Eintrag
-    [u setObject:_curId?:@"" forKey:@"spId"]; [u setObject:_curTitle?:@"" forKey:@"spTitle"];
+    [u setObject:_curId?:@"" forKey:@"spId"]; [u setObject:_curMediaType?:@"track" forKey:@"spMediaType"]; [u setObject:_curTitle?:@"" forKey:@"spTitle"];
     [u setObject:_curArtist?:@"" forKey:@"spArtist"]; [u setObject:cov?:@"" forKey:@"spCover"];
     double pos=[MMAudio currentTime]; [u setDouble:(pos>0?pos:0) forKey:@"spPos"];
     [u synchronize];
@@ -363,6 +370,7 @@ MM_IOS6_END
     NSUserDefaults*u=[NSUserDefaults standardUserDefaults];
     _shuffle=[u boolForKey:@"spShuffle"]; _repeatMode=[u integerForKey:@"spRepeat"];
     NSString*cid=[u stringForKey:@"spId"]; if(!cid.length) return;
+    _curMediaType=[u stringForKey:@"spMediaType"]?:@"track";
     _queue=[u objectForKey:@"spQueue"]?:@[]; _queueIdx=[u integerForKey:@"spIdx"];
     _origQueue=[u objectForKey:@"spOrigQueue"];
     _userQueue=[u objectForKey:@"spUserQueue"]?:@[]; _fromUser=[u boolForKey:@"spFromUser"];
@@ -383,7 +391,7 @@ MM_IOS6_END
 - (void)resumePlayback {
     _needsResume=NO; _pendingSeek=_resumePos;
     if(!_fromUser && _queue.count && _queueIdx>=0 && _queueIdx<(NSInteger)_queue.count) [self playCurrentInQueue];
-    else [self playTrackId:_curId title:_curTitle artist:_curArtist cover:_curCover];
+    else [self playTrackId:_curId title:_curTitle artist:_curArtist cover:_curCover mediaType:_curMediaType];
 }
 
 - (void)tapTab:(UIButton *)b { [self selectTab:b.tag]; }
@@ -533,6 +541,7 @@ MM_IOS6_END
     long ok=(long)[n.userInfo[@"ok"] integerValue], una=(long)[n.userInfo[@"unavailable"] integerValue];
     [self showDownloadMessage:una>0?LF(@"✓  %ld saved offline · %ld not on Spotify",ok,una):LF(@"✓  %ld tracks saved offline",ok)];
 }
+- (void)dlWifiPaused:(NSNotification *)n { [self showDownloadMessage:@"Daily offline selection paused · Wi-Fi required"]; }
 - (void)dlFull:(NSNotification *)n { [self showDownloadMessage:L(@"Storage full, download stopped")]; }
 - (void)dlError:(NSNotification *)n { [self showDownloadMessage:L(@"Connection error, download stopped. Please restart")]; }
 
@@ -569,7 +578,7 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
 // ---- Warteschlange von Hand: "Als Nächstes" = oben in _userQueue, "Zur Warteschlange" = unten; läuft nichts, startet der Titel ----
 - (void)queueTrack:(NSDictionary *)t next:(BOOL)next {
     if(![t[@"id"] length]) return;
-    NSDictionary*e=@{@"id":t[@"id"],@"title":t[@"title"]?:@"",@"artist":t[@"artist"]?:@"",@"cover":t[@"cover"]?:@""};
+    NSDictionary*e=@{@"id":t[@"id"],@"title":t[@"title"]?:@"",@"artist":t[@"artist"]?:@"",@"cover":t[@"cover"]?:@"",@"mediaType":t[@"mediaType"]?:@"track"};
     if(!_curId.length){ [self playList:@[e] index:0]; return; }
     NSMutableArray*q=[(_userQueue?:@[]) mutableCopy];
     if(next) [q insertObject:e atIndex:0]; else [q addObject:e];
@@ -592,9 +601,9 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
     _userQueue=[_userQueue subarrayWithRange:NSMakeRange(i+1,_userQueue.count-i-1)];
     if([self repeatQueue]){   // Warteschlange wiederholen: der Titel, der gerade lief (auch aus der Liste), und übersprungene wieder hinten an
         NSMutableArray*q=[_userQueue mutableCopy];
-        if(_curId.length) [q addObject:@{@"id":_curId,@"title":_curTitle?:@"",@"artist":_curArtist?:@"",@"cover":_curCover?:@""}];
+        if(_curId.length) [q addObject:@{@"id":_curId,@"title":_curTitle?:@"",@"artist":_curArtist?:@"",@"cover":_curCover?:@"",@"mediaType":_curMediaType?:@"track"}];
         [q addObjectsFromArray:skipped]; _userQueue=q; }
-    _fromUser=YES; [self playTrackId:t[@"id"] title:t[@"title"] artist:t[@"artist"] cover:t[@"cover"]];
+    _fromUser=YES; [self playTrackId:t[@"id"] title:t[@"title"] artist:t[@"artist"] cover:t[@"cover"] mediaType:t[@"mediaType"]];
 }
 // Umsortieren im Rest der Liste (nur Titel nach dem laufenden; Indizes in _queue)
 - (void)moveQueueFrom:(NSInteger)from to:(NSInteger)to {
@@ -623,7 +632,7 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
 - (void)playCurrentInQueue {
     if(_queueIdx<0 || _queueIdx>=(NSInteger)_queue.count) return;
     NSDictionary*t=_queue[_queueIdx];
-    [self playTrackId:t[@"id"] title:t[@"title"] artist:t[@"artist"] cover:t[@"cover"]];
+    [self playTrackId:t[@"id"] title:t[@"title"] artist:t[@"artist"] cover:t[@"cover"] mediaType:t[@"mediaType"]];
 }
 - (void)playNext {
     if(_userQueue.count){ [self playUserQueueIndex:0]; return; }   // erst die eingereihten Titel
@@ -653,24 +662,53 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
         _playStartTS=0; [MMAudio stop]; [self drawNpPlay];
         return;
     }
-    if(_repeatMode==2 && _curId.length){ [self playTrackId:_curId title:_curTitle artist:_curArtist cover:_curCover]; return; }   // Titel wiederholen
+    [self finishLastFMTrack];
+    if(_repeatMode==2 && _curId.length){ [self playTrackId:_curId title:_curTitle artist:_curArtist cover:_curCover mediaType:_curMediaType]; return; }   // Titel wiederholen
     if(!_userQueue.count && ![self nextUpEnabled]){ [self drawNpPlay]; [self updateNowPlaying]; return; }   // "Als Nächstes" aus: hier Schluss
     if(_userQueue.count || (_queue.count && (_queueIdx+1<(NSInteger)_queue.count || _repeatMode==1))) [self playNext];
     else [self drawNpPlay];   // Ende der Liste: Button zeigt wieder "Play"
+}
+
+- (void)lastFmTick {
+    if(_playStartTS<=0 || !_curId.length) return;
+    double position=[MMAudio currentTime];
+    if([MMAudio isPlaying]){
+        double delta=position-_lastFmLastPosition;
+        if(delta>0 && delta<=5.0) _lastFmListened+=delta; // ignore seeks and long pauses in the main run loop
+    }
+    _lastFmLastPosition=position;
+    double duration=[MMAudio duration];
+    if(duration>30 && _lastFmListened>=MIN(duration/2.0,240.0)) [self finishLastFMTrack];
+}
+- (void)finishLastFMTrack {
+    if(_lastFmScrobbled || !_curId.length || [_curMediaType isEqual:@"episode"]) return;
+    double duration=[MMAudio duration];
+    if(duration<=30 || _lastFmListened<MIN(duration/2.0,240.0)) return;
+    _lastFmScrobbled=YES;
+    [MMLastFM scrobbleTitle:_curTitle artist:_curArtist album:_curAlbum duration:duration timestamp:_lastFmStartedAt];
+}
+- (void)lastFmNowPlaying {
+    if(_playStartTS>0 && ![_curMediaType isEqual:@"episode"]) [MMLastFM updateNowPlayingTitle:_curTitle artist:_curArtist album:_curAlbum duration:[MMAudio duration]];
 }
 // nächsten Track im Hintergrund vorladen
 - (void)prefetchNext {
     NSInteger j=_queueIdx+1;   // einen Track voraus vorladen (spart RAM/Socket, v.a. während Downloads)
     if(_repeatMode==2) return;                                   // gleicher Titel kommt nochmal, liegt schon im Cache
-    if(_userQueue.count){ NSDictionary*n=_userQueue[0]; if(n[@"id"]) [MMSpotify prefetchTrack:n[@"id"]]; [MMCovers load:n[@"cover"] completion:nil]; return; }   // eingereiht kommt zuerst
+    if(_userQueue.count){ NSDictionary*n=_userQueue[0]; if(n[@"id"] && ![n[@"mediaType"] isEqual:@"episode"]) [MMSpotify prefetchTrack:n[@"id"]]; [MMCovers load:n[@"cover"] completion:nil]; return; }   // eingereiht kommt zuerst
     if(![self nextUpEnabled]) return;                            // danach kommt nichts mehr
     if(_repeatMode==1 && j>=(NSInteger)_queue.count) j=0;        // nach dem letzten kommt der erste
-    if(_queue.count && j<(NSInteger)_queue.count){ NSDictionary*n=_queue[j]; if(n[@"id"]) [MMSpotify prefetchTrack:n[@"id"]];
+    if(_queue.count && j<(NSInteger)_queue.count){ NSDictionary*n=_queue[j]; if(n[@"id"] && ![n[@"mediaType"] isEqual:@"episode"]) [MMSpotify prefetchTrack:n[@"id"]];
         [MMCovers load:n[@"cover"] completion:nil]; }              // Cover des nächsten Titels schon in den Speicher -> Wechsel sofort
     if(_queueIdx>0 && _queueIdx-1<(NSInteger)_queue.count) [MMCovers load:_queue[_queueIdx-1][@"cover"] completion:nil];   // und zurück
 }
 
 - (void)playTrackId:(NSString *)trackId title:(NSString *)title artist:(NSString *)artist cover:(NSString *)cover {
+    [self playTrackId:trackId title:title artist:artist cover:cover mediaType:@"track"];
+}
+- (void)playTrackId:(NSString *)trackId title:(NSString *)title artist:(NSString *)artist cover:(NSString *)cover mediaType:(NSString *)mediaType {
+    [self finishLastFMTrack];
+    _curMediaType=[mediaType isEqual:@"episode"]?@"episode":@"track";
+    _playStartTS=0; _lastFmListened=0; _lastFmLastPosition=0; _lastFmStartedAt=0; _lastFmScrobbled=NO;
     _needsResume=NO;   // neue Wiedergabe: "Play" soll danach diesen Titel fortsetzen, nicht den gespeicherten der letzten Sitzung
     // Länge aus der Liste (ms), damit beim Spielen während des Downloads gleich die Restzeit stimmt; sonst aus den Metadaten unten
     double dur=0; for(NSDictionary*q in [(_userQueue?:@[]) arrayByAddingObjectsFromArray:_queue?:@[]]) if([q[@"id"] isEqual:trackId] && [q[@"dur"] doubleValue]>0){ dur=[q[@"dur"] doubleValue]/1000.0; break; }
@@ -688,10 +726,13 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
     if(_player)[_player updateTitle:title artist:artist cover:cover];   // SOFORT mit bekannten Daten (nicht erst nach fetchTrack)
     [self updateNowPlaying];
     // echte Metadaten + Cover nachladen - feilt nach, nur wenn noch derselbe Track aktuell ist
-    [MMSpotify fetchTrack:trackId completion:^(NSDictionary*info,NSString*e){
+    if([_curMediaType isEqual:@"episode"]){
+        [MMHistory recordTrack:@{@"id":trackId,@"title":title?:@"",@"artist":artist?:@"",@"cover":cover?:@"",@"mediaType":@"episode"}];
+        if(_context && !_fromUser) [MMHistory recordContext:_context];
+    } else [MMSpotify fetchTrack:trackId completion:^(NSDictionary*info,NSString*e){
         if(info && [trackId isEqualToString:_curId]){   // Schutz gegen veraltete Antwort bei schnellem Skippen
             // Cover aus der Liste behalten: Spotify liefert hier oft eine andere Adresse fürs gleiche Bild -> sonst Flackern + doppeltes Laden
-            _curTitle=info[@"title"]?:title; _curArtist=info[@"artist"]?:artist; _curCover=cover.length?cover:(info[@"cover"]?:cover);
+            _curTitle=info[@"title"]?:title; _curArtist=info[@"artist"]?:artist; _curCover=info[@"cover"]?:cover;
             _curAlbumId=info[@"albumId"]; _curAlbum=info[@"album"]; _curArtistId=info[@"artistId"];
             if([info[@"durMs"] doubleValue]>0) [MMAudio setExpectedDuration:[info[@"durMs"] doubleValue]/1000.0];   // Länge, solange der Titel noch lädt
             // Verlauf auf dem iPhone (Spotify erfährt von dieser Wiedergabe nichts) -> Startseite zeigt sie sofort
@@ -701,18 +742,26 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
             [self loadNpCover:_curCover];
             if(_player)[_player updateTitle:_curTitle artist:_curArtist cover:_curCover];
             [self updateNowPlaying];
+            [self lastFmNowPlaying];
         }
     }];
     // echten Ton starten -> Spinner während des Ladens
     _npPlay.hidden=YES; [_npSpinner startAnimating]; _loading=YES; [self showLoadProgress:0]; [self padBarRefresh];
     _playStartTS=0;
-    [MMSpotify playTrack:trackId stream:(_pendingSeek<=0) completion:^(BOOL ok,NSString*e){   // Fortsetzen an gespeicherter Stelle: erst ganz laden (Spulen braucht die Datei)
+    void (^playDone)(BOOL,NSString*)=^(BOOL ok,NSString*e){
 
         [_npSpinner stopAnimating]; _npPlay.hidden=NO; _loading=NO; if(![MMAudio isBuffering]) [self showLoadProgress:-1];   // spielt schon, lädt noch: grün bleibt
         if(!ok) [self showPlayError:e?:@""];
-        if(ok){ _playStartTS=[NSDate timeIntervalSinceReferenceDate]; if(_pendingSeek>0){ [MMAudio seekTo:_pendingSeek]; _pendingSeek=0; } [self prefetchNext]; [self saveState]; }
+        if(ok){
+            _playStartTS=[NSDate timeIntervalSinceReferenceDate]; _lastFmStartedAt=(long long)[[NSDate date] timeIntervalSince1970];
+            _lastFmLastPosition=[MMAudio currentTime]; _lastFmListened=0; _lastFmScrobbled=NO;
+            if(_pendingSeek>0){ [MMAudio seekTo:_pendingSeek]; _lastFmLastPosition=[MMAudio currentTime]; _pendingSeek=0; }
+            [self lastFmNowPlaying]; [self prefetchNext]; [self saveState];
+        }
         [self drawNpPlay]; [self updateNowPlaying];
-    }];
+    };
+    if([_curMediaType isEqual:@"episode"]) [MMSpotify playEpisode:trackId stream:(_pendingSeek<=0) completion:playDone];
+    else [MMSpotify playTrack:trackId stream:(_pendingSeek<=0) completion:playDone];
 }
 
 - (void)loadNpCover:(NSString *)url {
@@ -781,11 +830,12 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
 }
 - (void)networkChanged:(NSNotification *)n {
     BOOL ok=[n.userInfo[@"reachable"] boolValue];
+    if(ok) [MMLastFM flushQueuedScrobbles];
     [self showDownloadMessage:ok?L(@"Back online"):L(@"Offline – downloaded songs still play")];
 }
 - (NSDictionary *)nowPlaying {
     if(!_curId.length) return nil;
-    return @{@"id":_curId,@"title":_curTitle?:@"",@"artist":_curArtist?:@"",@"cover":_curCover?:@"",@"index":@(_queueIdx+1),@"count":@(_queue.count),
+    return @{@"id":_curId,@"mediaType":_curMediaType?:@"track",@"title":_curTitle?:@"",@"artist":_curArtist?:@"",@"cover":_curCover?:@"",@"index":@(_queueIdx+1),@"count":@(_queue.count),
              @"albumId":_curAlbumId?:@"",@"album":_curAlbum?:@"",@"artistId":_curArtistId?:@""};
 }
 - (void)togglePlayPause { [self npTogglePlay]; }
@@ -793,7 +843,7 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
 - (void)playOrRestart {
     if(_needsResume){ [self resumePlayback]; return; }
     if(_curId.length && ![MMSpotify isLoading] && ([MMAudio hasEnded] || ![MMAudio isLoaded])){   // zu Ende oder gar nicht geladen: von vorn
-        [self playTrackId:_curId title:_curTitle artist:_curArtist cover:_curCover]; return; }
+        [self playTrackId:_curId title:_curTitle artist:_curArtist cover:_curCover mediaType:_curMediaType]; return; }
     [MMAudio setPaused:NO]; [self drawNpPlay]; [self updateNowPlaying];
 }
 + (BOOL)coverFlowOnRotate { id v=[[NSUserDefaults standardUserDefaults] objectForKey:@"coverFlowOnRotate"]; return v?[v boolValue]:YES; }
