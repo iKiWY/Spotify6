@@ -27,12 +27,48 @@ mutants = {
         'return @"track";',
     ),
     "show episodes use the rate-limited user token endpoint": (
-        'return showPath && episodeList;',
+        'return [path hasPrefix:@"shows/"];',
         'return NO;',
     ),
     "show episode routes skip the developer Web API": (
         'usesWebAPIForUserGET(path)',
         '[path hasPrefix:@"search?"]',
+    ),
+    "saved show URIs are discarded": (
+        'if([uri hasPrefix:@"spotify:show:"] && !psub(it,3))',
+        'if(NO && !psub(it,3))',
+    ),
+    "forbidden metadata lookup discards saved podcasts": (
+        'show metadata batch unavailable HTTP %ld; keeping IDs',
+        'show metadata batch unavailable HTTP %ld; dropping IDs',
+    ),
+    "saved podcast episode set is no longer read": (
+        'ids=spEpisodeIdsInSet(setName,user,&st);',
+        'ids=spShowIdsInSet(setName,user,&st);',
+    ),
+    "saved episodes are no longer resolved from catalog metadata": (
+        'spExt(uris,12,status)',
+        'spExt(uris,10,status)',
+    ),
+    "saved episode feed resolves the entire large collection": (
+        'spEpisodes(recentIds,&metadataStatus)',
+        'spEpisodes(ids,&metadataStatus)',
+    ),
+    "episode collection URIs are discarded": (
+        'if([uri hasPrefix:@"spotify:episode:"] && !psub(it,3))',
+        'if(NO && !psub(it,3))',
+    ),
+    "episode metadata reads the wrong title field": (
+        'spStr(psub(ep,2))',
+        'spStr(psub(ep,3))',
+    ),
+    "episode metadata loses its show relationship": (
+        'NSData*show=psub(ep,71);',
+        'NSData*show=psub(ep,1);',
+    ),
+    "podcast artwork chooses a large cover": (
+        'if(size==1) return u;',
+        'if(size==0) return u;',
     ),
 }
 

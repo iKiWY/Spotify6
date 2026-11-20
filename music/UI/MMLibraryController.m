@@ -11,6 +11,7 @@
 #import "MMKeepAlive.h"
 #import "MMPlaylistEditor.h"
 #import "MMDownloadsController.h"
+#import "MMShowsController.h"
 
 @interface MMLibraryController () <UITableViewDataSource, UITableViewDelegate>
 @end
@@ -98,10 +99,12 @@
 // --- Offline via Long-Press ---
 - (NSString *)pathForRow:(NSInteger)row {
     if(row==0) return @"me/tracks?market=from_token&limit=50";
-    return [NSString stringWithFormat:@"playlists/%@?market=from_token",_playlists[row-1][@"id"]];
+    if(row==1) return @"library/podcasts"; // navigation row, not a downloadable track list
+    return [NSString stringWithFormat:@"playlists/%@?market=from_token",_playlists[row-2][@"id"]];
 }
 - (NSString *)listPathForRow:(NSInteger)row { return [NSString stringWithFormat:@"%@/.spotcache/list_%lu.plist",MMDataDir(),(unsigned long)[self pathForRow:row].hash]; }
 - (NSArray *)cachedIdsForRow:(NSInteger)row {
+    if(row==1) return nil;
     NSArray*c=[NSArray arrayWithContentsOfFile:[self listPathForRow:row]];   // von MMTrackListController beim Öffnen gecacht
     return [c isKindOfClass:[NSArray class]]?[c valueForKey:@"id"]:nil;
 }
@@ -123,6 +126,7 @@
 - (NSInteger)lrow:(NSInteger)tableRow { return tableRow-(_hasDl?1:0); }
 - (void)updateHasDl { BOOL h=[MMSpotify downloadedTracks].count>0; if(h!=_hasDl){ _hasDl=h; [_table reloadData]; } }
 - (BOOL)rowDownloaded:(NSInteger)row {
+    if(row==1) return NO;
     if(!_dlMemo) _dlMemo=[NSMutableDictionary dictionary];
     NSString*key=[self pathForRow:row]; NSNumber*v=_dlMemo[key];
     if(!v){ NSArray*cids=[self cachedIdsForRow:row]; v=@(cids.count && [MMSpotify allDownloaded:cids]); _dlMemo[key]=v; }
@@ -139,9 +143,9 @@
     if(g.state!=UIGestureRecognizerStateBegan) return;
     NSIndexPath*ip=[_table indexPathForRowAtPoint:[g locationInView:_table]];
     NSInteger r=ip?[self lrow:ip.row]:-1;
-    if(r<0 || r>=(NSInteger)(1+_playlists.count)) return;   // "Heruntergeladen" hat kein Download-Menü
+    if(r<0 || r==1 || r>=(NSInteger)(2+_playlists.count)) return;   // Downloads and Podcasts have no offline playlist menu
     _pressedRow=r;
-    _pressedName=(r==0)?L(@"Liked Songs"):_playlists[r-1][@"name"];
+    _pressedName=(r==0)?L(@"Liked Songs"):_playlists[r-2][@"name"];
     NSArray*cids=[self cachedIdsForRow:r];
     if(cids.count){ _pressedIds=cids; [self showSheet]; return; }   // schnell & offline aus Cache
     [self showHud:L(@"Loading track list …")];
@@ -156,7 +160,7 @@
 // Menü wie beim Titel-Menü (MMSheet): Cover, Name, Anzahl + freier Platz, darunter Herunterladen/Entfernen
 - (void)showSheet {
     BOOL have=[MMSpotify allDownloaded:_pressedIds];
-    NSString*cover=(_pressedRow==0)?@"https://misc.scdn.co/liked-songs/liked-songs-300.png":_playlists[_pressedRow-1][@"cover"];
+    NSString*cover=(_pressedRow==0)?@"https://misc.scdn.co/liked-songs/liked-songs-300.png":_playlists[_pressedRow-2][@"cover"];
     NSString*sub=LF(@"Playlist · %lu songs · %@ free",(unsigned long)_pressedIds.count,[MMTrackListController fmtBytes:[MMSpotify freeDiskBytes]]);
     [MMSheet showIn:[MMRootController shared].view title:_pressedName subtitle:sub imageURL:[cover length]?cover:nil
             options:@[have?L(@"Remove download"):L(@"Download")] done:^(NSInteger i){ if(i==0) [self sheetToggle]; }];
@@ -208,7 +212,7 @@
         _loadingMore=NO; _table.tableFooterView=nil;
         NSArray*items=[j[@"items"] isKindOfClass:[NSArray class]]?j[@"items"]:nil;
         if(!items || ![p isEqualToString:_nextPath]) return;   // Fehler (beim nächsten Scrollen erneut) oder Liste inzwischen neu geladen
-        NSArray*more=[MMLibraryController parsePlaylists:items]; NSUInteger start=1+_playlists.count+(_hasDl?1:0);   // +1 = Lieblingssongs oben
+        NSArray*more=[MMLibraryController parsePlaylists:items]; NSUInteger start=2+_playlists.count+(_hasDl?1:0);   // Liked Songs and Podcasts precede playlists
         _playlists=[_playlists arrayByAddingObjectsFromArray:more];
         _nextPath=[j[@"next"] isKindOfClass:[NSString class]]?j[@"next"]:nil;
         NSMutableArray*ips=[NSMutableArray array]; for(NSUInteger i=0;i<more.count;i++) [ips addObject:[NSIndexPath indexPathForRow:start+i inSection:0]];
@@ -219,7 +223,7 @@
     if(_nextPath && ip.row>=(NSInteger)_playlists.count-6) [self loadMore];   // kurz vor dem Ende: nächste Seite
 }
 
-- (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { return (_hasDl?1:0) + 1 + _playlists.count; }  // +1 = gespeicherte Songs
+- (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { return (_hasDl?1:0) + 2 + _playlists.count; }  // Liked Songs + Podcasts
 
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:MMCellID(@"r",tv)];
@@ -241,11 +245,15 @@
     if(r==0){
         nm.text=L(@"Liked Songs"); nm.textColor=[SpotTheme ink];
         [MMCovers likedCoverInto:th];
+    } else if(r==1){
+        for(UIView*v in th.subviews)[v removeFromSuperview];
+        nm.text=L(@"Podcasts"); nm.textColor=[SpotTheme ink];
+        [MMCovers playlistPlaceholderInto:th]; th.backgroundColor=[SpotTheme card]; th.accessibilityIdentifier=@"library-podcasts";
     } else {
         for(UIView*v in th.subviews)[v removeFromSuperview];
-        nm.text=_playlists[r-1][@"name"]; nm.textColor=[SpotTheme ink];
+        nm.text=_playlists[r-2][@"name"]; nm.textColor=[SpotTheme ink];
         [MMCovers playlistPlaceholderInto:th]; th.backgroundColor=[SpotTheme card];
-        NSString*cu=_playlists[r-1][@"cover"], *pid=_playlists[r-1][@"id"];
+        NSString*cu=_playlists[r-2][@"cover"], *pid=_playlists[r-2][@"id"];
         th.accessibilityIdentifier=pid;                                   // Zelle wiederverwendet? -> Mosaik nur passend setzen
         if(cu.length) [MMCovers thumb:cu size:48 radius:0 into:th];
         else [MMCovers playlistCover:pid completion:^(NSString*mu){       // kein eigenes Bild -> Mosaik wie in der Spotify-App
@@ -264,7 +272,8 @@
     NSInteger r=[self lrow:ip.row];
     if(r<0) tl=[[MMTrackListController alloc] initWithTitle:L(@"Downloaded") path:@"me/downloads"];
     else if(r==0) tl=[[MMTrackListController alloc] initWithTitle:L(@"Liked Songs") path:@"me/tracks?market=from_token&limit=50"];
-    else { NSDictionary*p=_playlists[r-1]; tl=[[MMTrackListController alloc] initWithTitle:p[@"name"] path:[NSString stringWithFormat:@"playlists/%@?market=from_token",p[@"id"]]]; }
+    else if(r==1){ [[MMRootController shared] pushContent:[[MMShowsController alloc] init]]; return; }
+    else { NSDictionary*p=_playlists[r-2]; tl=[[MMTrackListController alloc] initWithTitle:p[@"name"] path:[NSString stringWithFormat:@"playlists/%@?market=from_token",p[@"id"]]]; }
     [[MMRootController shared] pushContent:tl];   // im Inhaltsbereich -> untere Leisten bleiben sichtbar
 }
 // ---- Einstellungen: eigene Seite ----

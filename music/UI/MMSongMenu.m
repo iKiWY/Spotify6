@@ -89,18 +89,34 @@
 @end
 
 // ---- Menü ----
+@interface MMSongMenu ()
++ (void)showForEpisode:(NSDictionary *)episode;
+@end
 @implementation MMSongMenu
 // Das Menü kommt über die oberste sichtbare Ansicht (auch über Player/Warteschlange)
 static UIView* topHost(void){ UIViewController*vc=[MMRootController shared]; while(vc.presentedViewController) vc=vc.presentedViewController; return vc.view; }
 
 + (void)showForTrack:(NSDictionary *)t {
     if(![t[@"id"] length]) return;
+    if([t[@"mediaType"] isEqual:@"episode"]){ [self showForEpisode:t]; return; }
     NSNumber*liked=[MMSpotify likedCached:t[@"id"]];
     if(!liked){   // Lieblingssongs noch nicht im Speicher -> einmal laden, dann Menü
         [MMSpotify isLiked:t[@"id"] completion:^(BOOL l, BOOL known){ [self show:t liked:known?@(l):nil]; }];
         return;
     }
     [self show:t liked:liked];
+}
++ (void)showForEpisode:(NSDictionary *)episode {
+    NSString*eid=episode[@"id"]; if(!eid.length) return;
+    MMRootController*root=[MMRootController shared];
+    BOOL downloaded=[MMSpotify isDownloaded:eid mediaType:@"episode"];
+    NSArray*opts=@[L(@"Play next"),L(@"Add to queue"),downloaded?L(@"Remove download"):L(@"Download")];
+    [MMSheet showIn:topHost() title:episode[@"title"]?:episode[@"name"] subtitle:episode[@"artist"] imageURL:episode[@"cover"] options:opts done:^(NSInteger i){
+        if(i==0){ [root queueTrack:episode next:YES]; [root showDownloadMessage:L(@"Plays next")]; }
+        else if(i==1){ [root queueTrack:episode next:NO]; [root showDownloadMessage:L(@"Added to queue")]; }
+        else if(i==2 && downloaded){ [MMSpotify deleteDownload:[@"episode:" stringByAppendingString:eid]]; [root showDownloadMessage:L(@"Download removed")]; }
+        else if(i==2){ if([episode[@"cover"] length]) [MMCovers prefetch:episode[@"cover"]]; [MMSpotify queueDownloadEpisodes:@[eid]]; }
+    }];
 }
 // Album/Artist des Titels öffnen; IDs aus dem Titel (Player) oder aus den Metadaten
 + (void)openPage:(BOOL)album forTrack:(NSDictionary *)t {

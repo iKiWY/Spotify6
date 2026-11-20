@@ -148,7 +148,9 @@
 "Media Quality" = "Media Quality";
 "Music and Podcasts" = "Music and Podcasts";
 "Music" = "Music";
-"Podcasts" = "Podcasts";
+"Podcasts" = "Your Episodes";
+"Loading your podcasts …" = "Loading your episodes …";
+"No saved podcasts yet." = "No saved episodes yet.";
 "Shows" = "Shows";
 "Episodes" = "Episodes";
 "Episode" = "Episode";

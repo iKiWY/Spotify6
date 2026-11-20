@@ -40,11 +40,11 @@ static void ptag(NSMutableData*d,int f,int wt){pvar(d,((uint64_t)f<<3)|wt);}
 static void pbytes(NSMutableData*d,int f,NSData*v){ptag(d,f,2);pvar(d,v.length);[d appendData:v];}
 static void pvarf(NSMutableData*d,int f,uint64_t v){ptag(d,f,0);pvar(d,v);}
 static void pmsg(NSMutableData*d,int f,NSData*m){ptag(d,f,2);pvar(d,m.length);[d appendData:m];}
-static uint64_t rvar(const unsigned char*b,NSUInteger len,NSUInteger*p){uint64_t r=0;int s=0;while(*p<len){unsigned char c=b[(*p)++];r|=(uint64_t)(c&0x7f)<<s;if(!(c&0x80))break;s+=7;}return r;}
+static uint64_t rvar(const unsigned char*b,NSUInteger len,NSUInteger*p){uint64_t r=0;int s=0;while(*p<len){unsigned char c=b[(*p)++];if(s<64)r|=(uint64_t)(c&0x7f)<<s;if(!(c&0x80))break;s+=7;if(s>=70)break;}return r;}
 static NSData* psub(NSData*m,int want){const unsigned char*b=m.bytes;NSUInteger len=m.length,pos=0;
  while(pos<len){uint64_t tag=rvar(b,len,&pos);int f=tag>>3,wt=tag&7;
-  if(wt==2){uint64_t l=rvar(b,len,&pos);NSData*v=[m subdataWithRange:NSMakeRange(pos,l)];pos+=l;if(f==want)return v;}
-  else if(wt==0){rvar(b,len,&pos);}else if(wt==5)pos+=4;else if(wt==1)pos+=8;else break;}return nil;}
+  if(wt==2){uint64_t l=rvar(b,len,&pos);if(pos>len||l>len-pos)return nil;NSData*v=[m subdataWithRange:NSMakeRange(pos,(NSUInteger)l)];pos+=(NSUInteger)l;if(f==want)return v;}
+  else if(wt==0){rvar(b,len,&pos);}else if(wt==5){if(len-pos<4)return nil;pos+=4;}else if(wt==1){if(len-pos<8)return nil;pos+=8;}else break;}return nil;}
 static int rd_all(int s,unsigned char*b,int n){int t=0;while(t<n){int r=(int)read(s,b+t,n-t);if(r<=0)return -1;t+=r;}return 0;}
 
 static void slog(NSString*fmt,...);
@@ -68,12 +68,12 @@ static const unsigned char AUDIO_IV[16]={0x72,0xe0,0x67,0xfb,0xdd,0xcb,0xcf,0x77
 static void pstr(NSMutableData*d,int f,NSString*s){pbytes(d,f,[s dataUsingEncoding:NSUTF8StringEncoding]);}
 static NSArray* psubs(NSData*m,int want){NSMutableArray*out=[NSMutableArray array];const unsigned char*b=m.bytes;NSUInteger len=m.length,pos=0;
  while(pos<len){uint64_t tag=rvar(b,len,&pos);int f=tag>>3,wt=tag&7;
-  if(wt==2){uint64_t l=rvar(b,len,&pos);NSData*v=[m subdataWithRange:NSMakeRange(pos,l)];pos+=l;if(f==want)[out addObject:v];}
-  else if(wt==0){rvar(b,len,&pos);}else if(wt==5)pos+=4;else if(wt==1)pos+=8;else break;}return out;}
+  if(wt==2){uint64_t l=rvar(b,len,&pos);if(pos>len||l>len-pos)break;NSData*v=[m subdataWithRange:NSMakeRange(pos,(NSUInteger)l)];pos+=(NSUInteger)l;if(f==want)[out addObject:v];}
+  else if(wt==0){rvar(b,len,&pos);}else if(wt==5){if(len-pos<4)break;pos+=4;}else if(wt==1){if(len-pos<8)break;pos+=8;}else break;}return out;}
 static int64_t pvarval(NSData*m,int want){const unsigned char*b=m.bytes;NSUInteger len=m.length,pos=0;
  while(pos<len){uint64_t tag=rvar(b,len,&pos);int f=tag>>3,wt=tag&7;
   if(wt==0){uint64_t v=rvar(b,len,&pos);if(f==want)return v;}
-  else if(wt==2){uint64_t l=rvar(b,len,&pos);pos+=l;}else if(wt==5)pos+=4;else if(wt==1)pos+=8;else break;}return -1;}
+  else if(wt==2){uint64_t l=rvar(b,len,&pos);if(pos>len||l>len-pos)return -1;pos+=(NSUInteger)l;}else if(wt==5){if(len-pos<4)return -1;pos+=4;}else if(wt==1){if(len-pos<8)return -1;pos+=8;}else break;}return -1;}
 
 // 16-Byte gid -> base62 (Umkehrung von base62ToGid, 22 Zeichen)
 static NSString* gidToBase62(NSData*gid){
@@ -250,11 +250,15 @@ static NSData* offlineMediaData(NSString*path,NSString*mediaType){
 }
 static BOOL usesWebAPIForUserGET(NSString*path){
     if([path hasPrefix:@"search?"]) return YES;
-    BOOL showPath=[path hasPrefix:@"shows/"];
-    BOOL episodeList=[path hasSuffix:@"/episodes"] || [path rangeOfString:@"/episodes?"].location!=NSNotFound;
-    return showPath && episodeList;
+    // Show metadata and episodes are public catalog reads. The account token
+    // gets HTTP 429 on these routes; saved membership is read from collection.
+    return [path hasPrefix:@"shows/"];
 }
 static NSString* webAPIPathForUserGET(NSString*path){
+    // Developer-token requests do not carry the account country. Spotify
+    // requires an explicit market for show episode lists.
+    NSString*market=[gCountry isKindOfClass:[NSString class]]?[[gCountry stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] uppercaseString]:@"";
+    if(market.length==2) return [path stringByReplacingOccurrencesOfString:@"market=from_token" withString:[NSString stringWithFormat:@"market=%@",market]];
     NSString*clean=[path stringByReplacingOccurrencesOfString:@"?market=from_token&" withString:@"?"];
     clean=[clean stringByReplacingOccurrencesOfString:@"?market=from_token" withString:@""];
     return [clean stringByReplacingOccurrencesOfString:@"&market=from_token" withString:@""];
@@ -1706,6 +1710,16 @@ static NSString* coverFromGroup(NSData*cg){
         if(!cover||pvarval(im,2)==0) cover=u; }
     return cover;
 }
+// Podcast lists use 44-48pt artwork. Prefer Spotify's SMALL variant so the
+// phone downloads a thumbnail instead of the default ~300px cover.
+static NSString* smallCoverFromGroup(NSData*cg){
+    NSString*fallback=nil;
+    for(NSData*im in (cg?psubs(cg,1):@[])){ NSData*fid=psub(im,1); if(!fid) continue;
+        NSString*u=[@"https://i.scdn.co/image/" stringByAppendingString:hexd(fid.bytes,(int)fid.length)];
+        int64_t size=pvarval(im,2); if(size==1) return u; if(size==0) fallback=u; if(!fallback) fallback=u;
+    }
+    return fallback;
+}
 // Titelinfos gesammelt -> Web-API-Track-Dicts in Eingabereihenfolge (mit Album- und Artist-IDs).
 static NSArray* spTracks(NSArray*ids){
     NSMutableArray*uris=[NSMutableArray array]; for(NSString*tid in ids)[uris addObject:[@"spotify:track:" stringByAppendingString:tid]];
@@ -1720,6 +1734,27 @@ static NSArray* spTracks(NSArray*ids){
         NSMutableDictionary*al=[@{@"images":cover?@[@{@"url":cover}]:@[],@"name":alb?spStr(psub(alb,2)):@""} mutableCopy]; if(alid) al[@"id"]=alid;
         int64_t zd=pvarval(tr,7); int64_t ms=zd>=0?((zd>>1)^-(zd&1)):0;   // Track.duration (ms) ist sint32 (ZigZag)
         [out addObject:@{@"id":tid,@"name":name,@"artists":@[a],@"album":al,@"duration_ms":@(ms>0?ms:0)}];
+    }
+    return out;
+}
+// EpisodeV4 (extended-metadata kind 12) supplies episode and show details
+// directly from Spotify's internal catalog; public episodes?ids returns 403
+// for the legacy client installed on the iPhone 4s.
+static NSArray* spEpisodes(NSArray*ids,int*status){
+    NSMutableArray*uris=[NSMutableArray array]; for(NSString*eid in ids) [uris addObject:[@"spotify:episode:" stringByAppendingString:eid]];
+    NSDictionary*byUri=spExt(uris,12,status); NSMutableArray*out=[NSMutableArray array];
+    for(NSString*eid in ids){
+        NSData*ep=byUri[[ @"spotify:episode:" stringByAppendingString:eid ]]; if(!ep.length) continue;
+        // Spotify metadata.Episode: name=2, cover_image=68, show=71;
+        // metadata.Show: name=2, cover_image=69.
+        NSData*show=psub(ep,71); NSString*showName=spStr(psub(show,2));
+        NSString*episodeCover=smallCoverFromGroup(psub(ep,68)); NSString*showCover=smallCoverFromGroup(psub(show,69));
+        NSString*cover=episodeCover.length?episodeCover:showCover;
+        NSMutableDictionary*item=[@{@"id":eid,@"name":spStr(psub(ep,2)),@"show":@{@"name":showName.length?showName:@"Podcast",@"images":cover?@[@{@"url":cover}]:@[]},@"images":cover?@[@{@"url":cover}]:@[]} mutableCopy];
+        if(![item[@"name"] length]) item[@"name"]=@"Episode";
+        int64_t encodedLength=pvarval(ep,7); int64_t length=encodedLength>=0?((encodedLength>>1)^-(encodedLength&1)):0;
+        if(length>0) item[@"duration_ms"]=@(length);
+        [out addObject:item];
     }
     return out;
 }
@@ -1759,6 +1794,55 @@ static NSArray* spLikedIds(int*st){
         NSMutableArray*ids=[NSMutableArray array]; for(NSArray*it in items)[ids addObject:it[0]]; gLiked=ids; gLikedAt=[[NSDate date] timeIntervalSince1970]; *st=200;
         return gLiked;
     }
+}
+// Read a collection-v2 set, retaining live spotify:show URIs.
+static NSArray* spShowIdsInSet(NSString*setName,NSString*user,int*st){
+    NSMutableArray*items=[NSMutableArray array]; NSData*tok=nil;
+    for(int page=0;page<40;page++){
+        NSMutableData*req=[NSMutableData data]; pstr(req,1,user); pstr(req,2,setName);
+        if(tok) pbytes(req,3,tok); pvarf(req,4,300);
+        NSString*ct=@"application/vnd.collection-v2.spotify.proto";
+        NSData*d=spReq(@"POST",@"/collection/v2/paging",req,ct,ct,st);
+        if(*st!=200) return nil;
+        for(NSData*it in psubs(d,1)){
+            NSString*uri=spStr(psub(it,1));
+            if([uri hasPrefix:@"spotify:show:"] && !psub(it,3)) [items addObject:@[[uri substringFromIndex:13],@(pvarval(it,2))]];
+        }
+        tok=psub(d,2); if(!tok.length) break;
+    }
+    [items sortUsingComparator:^NSComparisonResult(NSArray*a,NSArray*b){ return [b[1] compare:a[1]]; }];
+    NSMutableArray*ids=[NSMutableArray array]; for(NSArray*item in items) if([item[0] length]) [ids addObject:item[0]];
+    *st=200; slog(@"saved show set %@ -> %lu IDs",setName,(unsigned long)ids.count); return ids;
+}
+// Spotify's "Your Episodes" collection stores saved episode URIs in its own set.
+static NSArray* spEpisodeIdsInSet(NSString*setName,NSString*user,int*st){
+    NSMutableArray*items=[NSMutableArray array]; NSData*tok=nil;
+    for(int page=0;page<40;page++){
+        NSMutableData*req=[NSMutableData data]; pstr(req,1,user); pstr(req,2,setName);
+        if(tok) pbytes(req,3,tok); pvarf(req,4,300);
+        NSString*ct=@"application/vnd.collection-v2.spotify.proto";
+        NSData*d=spReq(@"POST",@"/collection/v2/paging",req,ct,ct,st);
+        if(*st!=200) return nil;
+        for(NSData*it in psubs(d,1)){
+            NSString*uri=spStr(psub(it,1));
+            if([uri hasPrefix:@"spotify:episode:"] && !psub(it,3)) [items addObject:@[[uri substringFromIndex:16],@(pvarval(it,2))]];
+        }
+        tok=psub(d,2); if(!tok.length) break;
+    }
+    [items sortUsingComparator:^NSComparisonResult(NSArray*a,NSArray*b){ return [b[1] compare:a[1]]; }];
+    NSMutableArray*ids=[NSMutableArray array]; for(NSArray*item in items) if([item[0] length]) [ids addObject:item[0]];
+    *st=200; slog(@"saved episode set %@ -> %lu IDs",setName,(unsigned long)ids.count); return ids;
+}
+// Saved tracks use "collection"; Spotify keeps other library types in
+// dedicated collection sets. Probe the show/podcast sets before track collection.
+static NSArray* spSavedShowIds(int*st){
+    NSString*user=spUser(); if(!user.length){ *st=401; return nil; }
+    for(NSString*setName in @[@"show",@"shows",@"podcast",@"podcasts",@"collection"]){
+        NSArray*ids=spShowIdsInSet(setName,user,st);
+        if(ids.count) return ids;
+        if(!ids && (*st==401 || *st==429 || *st>=500)) return nil;
+    }
+    *st=200; return @[];
 }
 static NSDictionary* trackPage(NSArray*ids,NSUInteger off,NSUInteger lim,NSUInteger total,NSString*nextBase){
     NSArray*slice=(off<ids.count)?[ids subarrayWithRange:NSMakeRange(off,MIN(lim,ids.count-off))]:@[];
@@ -2174,6 +2258,60 @@ static NSString* apiCachePath(NSString*path){ return [NSString stringWithFormat:
         }];
     } copy];
     step(path);
+}
+
+// Library Podcasts: account collection membership is reliable on legacy
+// clients; public show metadata is fetched in catalog batches with app token.
++ (void)savedShows:(void(^)(NSArray *shows, NSInteger status))done {
+    dispatch_async(dispatch_get_global_queue(0,0), ^{
+        int st=0; NSArray*ids=spSavedShowIds(&st);
+        if(!ids){ dispatch_async(dispatch_get_main_queue(), ^{ if(done)done(nil,st); }); return; }
+        if(!ids.count){ dispatch_async(dispatch_get_main_queue(), ^{ if(done)done(@[],200); }); return; }
+        NSMutableArray*results=[NSMutableArray array];
+        __block NSUInteger off=0;
+        __block void(^step)(void)=nil;
+        step=[^{
+            NSUInteger end=MIN(off+50,ids.count);
+            NSArray*batch=[ids subarrayWithRange:NSMakeRange(off,end-off)]; off=end;
+            NSString*joined=[batch componentsJoinedByString:@","];
+            [self webGet:[NSString stringWithFormat:@"shows?ids=%@",joined] completion:^(NSDictionary*j,NSInteger status){
+                if(status<200 || status>=300 || ![j[@"shows"] isKindOfClass:[NSArray class]]){
+                    // Multi-show catalog lookup is forbidden for this legacy
+                    // client in some markets. Preserve the saved IDs so episode
+                    // requests can still provide the feed.
+                    slog(@"show metadata batch unavailable HTTP %ld; keeping IDs",(long)status);
+                    for(NSString*sid in batch) [results addObject:@{@"id":sid,@"name":@"Podcast",@"publisher":@"",@"images":@[]}];
+                    if(off<ids.count) step(); else { if(done)done(results,200); step=nil; }
+                    return;
+                }
+                NSMutableDictionary*byID=[NSMutableDictionary dictionary];
+                for(id show in j[@"shows"]) if([show isKindOfClass:[NSDictionary class]] && [show[@"id"] isKindOfClass:[NSString class]]) byID[show[@"id"]]=show;
+                for(NSString*sid in batch) if(byID[sid]) [results addObject:byID[sid]];
+                if(off<ids.count) step(); else { if(done)done(results,200); step=nil; }
+            }];
+        } copy];
+        step();
+    });
+}
+
++ (void)latestPodcastEpisodes:(void(^)(NSArray *episodes, NSInteger status))done {
+    dispatch_async(dispatch_get_global_queue(0,0), ^{
+        NSString*user=spUser(); if(!user.length){ dispatch_async(dispatch_get_main_queue(), ^{ if(done)done(nil,401); }); return; }
+        int st=0; NSArray*ids=nil;
+        for(NSString*setName in @[@"episode",@"episodes",@"listenlater"]){
+            ids=spEpisodeIdsInSet(setName,user,&st);
+            if(!ids){ if(st==401||st==429||st>=500) break; continue; }
+            if(ids.count) break;
+        }
+        if(!ids){ dispatch_async(dispatch_get_main_queue(), ^{ if(done)done(nil,st); }); return; }
+        if(!ids.count){ dispatch_async(dispatch_get_main_queue(), ^{ if(done)done(@[],200); }); return; }
+        NSArray*recentIds=ids.count>50?[ids subarrayWithRange:NSMakeRange(0,50)]:ids;
+        slog(@"latest saved podcast episodes: %lu of %lu",(unsigned long)recentIds.count,(unsigned long)ids.count);
+        int metadataStatus=0; NSArray*episodes=spEpisodes(recentIds,&metadataStatus);
+        if(!episodes.count && metadataStatus>=200 && metadataStatus<300) metadataStatus=502;
+        slog(@"resolved saved podcast episodes -> HTTP %d (%lu episodes)",metadataStatus,(unsigned long)episodes.count);
+        dispatch_async(dispatch_get_main_queue(), ^{ if(done)done((metadataStatus>=200&&metadataStatus<300)?episodes:nil,metadataStatus); });
+    });
 }
 
 // ---- Login mit Code über ein anderes Gerät (OAuth Device Flow, wie bei Smart-TVs) ----

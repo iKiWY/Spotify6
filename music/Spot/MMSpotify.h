@@ -82,6 +82,8 @@ void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Librar
 + (void)apiUser:(NSString *)method path:(NSString *)path body:(NSData *)body completion:(void(^)(NSDictionary *json, NSInteger status))done;
 // Holt ALLE Seiten einer paginierten Liste (folgt "next"), liefert die rohen items (track-wrapper o. tracks).
 + (void)apiUserAllItems:(NSString *)path completion:(void(^)(NSArray *items, NSInteger status))done;
++ (void)savedShows:(void(^)(NSArray *shows, NSInteger status))done;
++ (void)latestPodcastEpisodes:(void(^)(NSArray *episodes, NSInteger status))done;
 // GET mit Disk-Cache: liefert sofort die letzten Daten (fresh=NO), dann frische (fresh=YES) - aber nur wenn sie sich geändert haben.
 // Ohne Cache und bei Fehler kommt genau ein Aufruf mit fresh=YES (json=nil).
 + (void)apiUserCached:(NSString *)path completion:(void(^)(NSDictionary *json, NSInteger status, BOOL fresh))done;
