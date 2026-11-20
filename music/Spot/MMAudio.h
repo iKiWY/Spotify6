@@ -1,4 +1,4 @@
-// MMAudio.h - spielt ein (bereits entschlüsseltes) Spotify-Ogg per AudioQueue ab.
+// MMAudio.h - spielt ein (bereits entschlüsseltes) Spotify-Ogg über AUGraph ab.
 // Dekodiert Ogg/Vorbis streamend mit stb_vorbis; iOS 6 kann Vorbis nicht nativ.
 #import <Foundation/Foundation.h>
 
@@ -21,6 +21,7 @@
 + (void)setExpectedDuration:(double)seconds;   // Länge aus den Metadaten (gilt, bis die ganze Datei da ist; 0 = unbekannt)
 + (void)stop;
 + (void)setPaused:(BOOL)paused;
++ (void)restorePlaybackIfNeeded; // reativa a sessão e reinicia o grafo após o iOS suspender a saída
 + (BOOL)isPlaying;
 + (BOOL)hasEnded;
 + (BOOL)isLoaded;        // zu Ende gespielt: "Weiter" würde nichts tun, der Titel muss neu starten

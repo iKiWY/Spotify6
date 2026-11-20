@@ -11,8 +11,8 @@
 #import "MMDiagnosticsController.h"
 #import "MMSheet.h"
 #import "MMEqualizerController.h"
+#import "MMEqualizer.h"
 #import "MMAudio.h"
-#import <math.h>
 
 @interface MMSettingsController () <UITableViewDataSource, UITableViewDelegate>
 @end
@@ -87,10 +87,7 @@
     _items=it;
 }
 - (NSString *)equalizerDetail {
-    if(![MMAudio isEqualizerEnabled]) return L(@"Off");
-    NSArray *g=[[NSUserDefaults standardUserDefaults] arrayForKey:@"equalizer.gains"];
-    for(id v in g) if(fabs([v doubleValue])>0.01) return L(@"Custom");
-    return L(@"Flat");
+    return L([MMEqualizer presetName]);
 }
 - (BOOL)valueFor:(NSString *)key {
     if([key isEqual:@"bg"]) return [MMKeepAlive enabled];
