@@ -18,6 +18,34 @@ static char kRowKey;   // Zeilennummer am Artist-Label (Album-Seite)
 - (BOOL)isPodcastEpisodes;
 @end
 
+static NSDictionary *likedDownloadSelection(NSArray *pool, NSArray *history, BOOL allowRepeat, NSSet *downloadedIDs, long long budget, long long spaceBudget, NSInteger estimateKbps) {
+    NSMutableSet *recent=[NSMutableSet set];
+    if(!allowRepeat) for(id batch in history) if([batch isKindOfClass:[NSArray class]]) [recent addObjectsFromArray:batch];
+    NSMutableSet *seen=[NSMutableSet set];
+    NSMutableArray *chosen=[NSMutableArray array];
+    long long bytes=0;
+    NSUInteger recentExcluded=0,eligible=0,budgetExcluded=0,spaceExcluded=0;
+    long long rate=MAX(1,estimateKbps);
+    for(id item in pool){
+        if(![item isKindOfClass:[NSDictionary class]]) continue;
+        id rawID=[item objectForKey:@"id"];
+        NSString *tid=[rawID isKindOfClass:[NSString class]]?rawID:nil;
+        if(!tid.length || [seen containsObject:tid]) continue;
+        [seen addObject:tid];
+        if([downloadedIDs containsObject:tid]) continue;
+        if(!allowRepeat && [recent containsObject:tid]){ recentExcluded++; continue; }
+        eligible++;
+        long long duration=MAX(1,[[item objectForKey:@"dur"] longLongValue]);
+        if(duration>LLONG_MAX/rate) continue;
+        long long estimate=MAX(1,duration*rate/8);
+        if(estimate>budget || bytes>budget-estimate){ budgetExcluded++; continue; }
+        if(estimate>spaceBudget || bytes>spaceBudget-estimate){ spaceExcluded++; continue; }
+        [chosen addObject:item];
+        bytes+=estimate;
+    }
+    return [NSDictionary dictionaryWithObjectsAndKeys:[chosen copy],@"items",[NSNumber numberWithLongLong:bytes],@"bytes",[NSNumber numberWithLongLong:bytes],@"newBytes",[NSNumber numberWithUnsignedInteger:recentExcluded],@"recentExcluded",[NSNumber numberWithUnsignedInteger:eligible],@"eligible",[NSNumber numberWithUnsignedInteger:budgetExcluded],@"budgetExcluded",[NSNumber numberWithUnsignedInteger:spaceExcluded],@"spaceExcluded",nil];
+}
+
 @implementation MMTrackListController {
     NSString *_title, *_path;
     UITableView *_table;
@@ -466,40 +494,29 @@ static UIImage* offIcon(BOOL have, UIColor*grn){
             NSString*tid=[t[@"id"] isKindOfClass:[NSString class]]?t[@"id"]:nil; if(!tid.length) continue;
             long long ms=[t[@"duration_ms"] longLongValue]; [pool addObject:@{@"id":tid,@"dur":@(ms)}]; }
         if(!pool.count){ [_offSpin stopAnimating]; _offBtn.hidden=NO; [[[UIAlertView alloc] initWithTitle:@"Nenhuma música encontrada" message:@"Não encontrei músicas curtidas para colocar na seleção." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show]; return; }
-        BOOL allow=[[NSUserDefaults standardUserDefaults] boolForKey:@"likedDailyRepeat"];
-        NSMutableArray*history=[NSMutableArray arrayWithArray:[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyHistory"]?:@[]];
-        NSMutableSet*recent=[NSMutableSet set]; if(!allow) for(id a in history) if([a isKindOfClass:[NSArray class]]) [recent addObjectsFromArray:a];
         for(NSInteger i=(NSInteger)pool.count-1;i>0;i--){ NSInteger j=arc4random_uniform((uint32_t)i+1); [pool exchangeObjectAtIndex:i withObjectAtIndex:j]; }
+        BOOL allow=[[NSUserDefaults standardUserDefaults] boolForKey:@"likedDailyRepeat"];
+        NSArray*history=[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyHistory"]?:@[];
         id budgetValue=[[NSUserDefaults standardUserDefaults] objectForKey:@"likedDailyBudgetMB"];
         long long budget=budgetValue?(long long)([budgetValue doubleValue]*1024*1024):LLONG_MAX;
         // Streaming cache is expendable: reclaim it before estimating how far
         // the unlimited liked-song queue can safely fill the device.
         [MMSpotify songCacheBytes];
         long long spaceBudget=MAX(0,[MMSpotify freeDiskBytes]-MM_LIKED_DOWNLOAD_MIN_FREE_BYTES);
-        NSMutableArray*chosen=[NSMutableArray array]; long long bytes=0; NSArray*have=[MMSpotify downloadedTracks]; NSMutableDictionary*downloaded=[NSMutableDictionary dictionary]; for(NSDictionary*d in have) downloaded[d[@"id"]]=d[@"bytes"]?:@0;
+        NSMutableSet*downloaded=[NSMutableSet set]; for(NSDictionary*d in [MMSpotify downloadedTracks]) if([d[@"id"] isKindOfClass:[NSString class]]) [downloaded addObject:d[@"id"]];
         NSInteger estimateKbps=[MMMediaQuality downloadBitrateForWiFi];
-        long long newBytes=0;
-        // Budget applies only to the newly selected set; existing downloads use their actual file sizes.
-        NSMutableArray*candidates=[NSMutableArray array];
-        for(NSDictionary*t in pool) if(allow || ![recent containsObject:t[@"id"]]) [candidates addObject:t];
-        // Se acabaram as faixas inéditas, libera as mais antigas pela ordem embaralhada para não gerar seleção vazia.
-        if(!allow && candidates.count<pool.count) {
-            NSMutableArray*older=[NSMutableArray array];
-            for(NSDictionary*t in pool) if([recent containsObject:t[@"id"]]) [older addObject:t];
-            for(NSInteger i=(NSInteger)older.count-1;i>0;i--){ NSInteger j=arc4random_uniform((uint32_t)i+1); [older exchangeObjectAtIndex:i withObjectAtIndex:j]; }
-            [candidates addObjectsFromArray:older];
+        NSDictionary*selection=likedDownloadSelection(pool,history,allow,downloaded,budget,spaceBudget,estimateKbps);
+        NSArray*chosenItems=selection[@"items"];
+        NSArray*chosen=[chosenItems valueForKey:@"id"]?:@[];
+        long long bytes=[selection[@"bytes"] longLongValue];
+        if(!chosen.count){
+            NSString*message;
+            if(![selection[@"eligible"] unsignedIntegerValue] && [selection[@"recentExcluded"] unsignedIntegerValue]) message=@"As músicas que ainda não estão baixadas foram selecionadas recentemente. Ative “Repeat liked songs” para permitir repetições.";
+            else if(![selection[@"eligible"] unsignedIntegerValue]) message=@"Todas as músicas curtidas já estão baixadas.";
+            else if([selection[@"budgetExcluded"] unsignedIntegerValue] && ![selection[@"spaceExcluded"] unsignedIntegerValue]) message=@"O limite diário atual não comporta outra música. Aumente o limite em Ajustes > Downloads.";
+            else message=@"Não há espaço suficiente sem usar a reserva mínima de 256 MB para o sistema, apps e fotos.";
+            [_offSpin stopAnimating]; _offBtn.hidden=NO; [[[UIAlertView alloc] initWithTitle:@"Nenhuma música nova" message:message delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show]; return;
         }
-        for(NSDictionary*t in candidates){
-            NSString*tid=t[@"id"];
-            long long existingBytes=[downloaded[tid] longLongValue];
-            long long estimate=existingBytes?existingBytes:MAX(1,[t[@"dur"] longLongValue])*estimateKbps/8;
-            long long storageCost=existingBytes?0:estimate;
-            if((budget!=LLONG_MAX && (estimate>budget || bytes>budget-estimate)) || storageCost>spaceBudget || newBytes>spaceBudget-storageCost) continue;
-            [chosen addObject:tid];
-            if(bytes<=LLONG_MAX-estimate) bytes+=estimate; else bytes=LLONG_MAX;
-            if(newBytes<=LLONG_MAX-storageCost) newBytes+=storageCost; else newBytes=LLONG_MAX;
-        }
-        if(!chosen.count){ [_offSpin stopAnimating]; _offBtn.hidden=NO; [[[UIAlertView alloc] initWithTitle:@"Limite diário" message:@"Não há espaço suficiente sem usar a reserva mínima de 256 MB para o sistema, apps e fotos." delegate:nil cancelButtonTitle:@"OK" otherButtonTitles:nil] show]; return; }
         NSMutableArray*newHist=[NSMutableArray arrayWithObject:chosen]; [newHist addObjectsFromArray:history]; while(newHist.count>7) [newHist removeLastObject]; [[NSUserDefaults standardUserDefaults] setObject:newHist forKey:@"likedDailyHistory"];
         [MMSpotify queueLikedDailyTracks:chosen]; [_offSpin stopAnimating]; _offBtn.hidden=NO;
         NSString*msg=[NSString stringWithFormat:@"%lu músicas · %@ estimados",(unsigned long)chosen.count,[MMTrackListController fmtBytes:bytes]];
